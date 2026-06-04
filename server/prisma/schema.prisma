@@ -1,0 +1,231 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  name          String?
+  password      String
+  role          Role
+  isActive      Boolean  @default(true)
+  createdBy     String?
+  lastLogin     DateTime?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  clinician     Clinician?
+}
+
+enum Role {
+  SLP
+  ADMIN
+  PARENT
+  SCHOOL_COORDINATOR
+}
+
+model Patient {
+  id           String   @id @default(uuid())
+  name         String
+  dob          DateTime
+  guardianName String?
+  guardianPhone String?
+  guardianEmail String?
+  insuranceCarrier String?
+  insurancePolicy  String?
+  diagnoses    String[]
+  assignedSlpId String
+  metadata     Json?
+  medicareCap  Float    @default(2480)
+  medicareSpent Float   @default(0)
+  parentUserId String?
+  isArchived   Boolean  @default(false)
+  sessions     Session[]
+  assessments  Assessment[]
+  goals        Goal[]
+  billingRecords BillingRecord[]
+  homeExercises HomeExercise[]
+  appointments Appointment[]
+  createdAt    DateTime @default(now())
+}
+
+model Session {
+  id            String   @id @default(uuid())
+  patientId     String
+  patient       Patient  @relation(fields: [patientId], references: [id])
+  clinicianId   String
+  dateOfService DateTime
+  durationMinutes Int
+  cptCode       String
+  icd10Codes    String[]
+  telehealthSession Boolean @default(false)
+  soapNote      Json?
+  exercises     Json?
+  mediaFiles    Json?
+  status        SessionStatus @default(DRAFT)
+  createdAt     DateTime @default(now())
+}
+
+enum SessionStatus {
+  DRAFT
+  PENDING_COSIGN
+  SIGNED
+  LOCKED
+}
+
+model Assessment {
+  id              String   @id @default(uuid())
+  patientId       String
+  patient         Patient  @relation(fields: [patientId], references: [id])
+  testName        String
+  subtest         String?
+  dateAdministered DateTime
+  rawScore        Float?
+  standardScore   Float?
+  percentile      Float?
+  severityLabel   String?
+  observations    String?
+  rawData         Json?
+  createdAt       DateTime @default(now())
+}
+
+model Goal {
+  id          String   @id @default(uuid())
+  patientId   String
+  patient     Patient  @relation(fields: [patientId], references: [id])
+  domain      String
+  goalText    String
+  baseline    Float
+  target      Float
+  current     Float    @default(0)
+  status      GoalStatus @default(IN_PROGRESS)
+  targetDate  DateTime?
+  cptCode     String?
+  icd10Code   String?
+  createdAt   DateTime @default(now())
+  progressHistory GoalProgress[]
+}
+
+model GoalProgress {
+  id         String   @id @default(uuid())
+  goalId     String
+  goal       Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  value      Float
+  recordedAt DateTime @default(now())
+}
+
+enum GoalStatus {
+  IN_PROGRESS
+  MET
+  NOT_MET
+  ON_HOLD
+}
+
+model BillingRecord {
+  id          String   @id @default(uuid())
+  patientId   String
+  patient     Patient  @relation(fields: [patientId], references: [id])
+  sessionId   String?
+  dateOfService DateTime
+  cptCodes    String[]
+  icd10Codes  String[]
+  billedAmount Float
+  paidAmount  Float?
+  status      BillingStatus @default(PENDING)
+  modifiers   String[]
+  createdAt   DateTime @default(now())
+}
+
+enum BillingStatus {
+  PENDING
+  SUBMITTED
+  PAID
+  DENIED
+  APPEALED
+}
+
+model Clinician {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id])
+  name          String
+  credentials   String
+  specialty     String?
+  licenseNo     String?
+  phone         String?
+  department    String?
+  createdAt     DateTime @default(now())
+}
+
+model Appointment {
+  id              String   @id @default(uuid())
+  patientId       String
+  patient         Patient  @relation(fields: [patientId], references: [id])
+  clinicianId     String
+  startTime       DateTime
+  durationMinutes Int
+  type            String   // "Individual Therapy" | "Telepractice" | "Evaluation"
+  status          AppointmentStatus @default(SCHEDULED)
+  sessionId       String?
+  isTelepractice  Boolean @default(false)
+  dailyRoomUrl    String?
+  createdAt       DateTime @default(now())
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model HomeExercise {
+  id          String   @id @default(uuid())
+  patientId   String
+  patient     Patient  @relation(fields: [patientId], references: [id])
+  name        String
+  description String
+  frequency   String
+  dueDate     DateTime?
+  completedAt DateTime?
+  assignedBy  String   // Clinician ID
+  createdAt   DateTime @default(now())
+}
+
+model Message {
+  id         String   @id @default(uuid())
+  fromUserId String
+  toUserId   String
+  patientId  String
+  subject    String
+  body       String
+  readAt     DateTime?
+  createdAt  DateTime @default(now())
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  action     String   // LOGIN | VIEW_PATIENT | SIGN_NOTE | VIEW_BILLING | EXPORT etc.
+  resource   String
+  resourceId String?
+  details    Json?
+  createdAt  DateTime @default(now())
+}
+
+model IepStudent {
+  id                 String   @id @default(uuid())
+  name               String
+  grade              String
+  disorder           String
+  iepDueDate         DateTime
+  currentGoalPercent Float
+  lastSession        DateTime
+  patientId          String?
+  createdAt          DateTime @default(now())
+}
