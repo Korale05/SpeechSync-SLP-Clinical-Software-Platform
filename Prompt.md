@@ -5,6 +5,7 @@
 
 ---
 
+
 ## ROLE & MISSION
 
 You are a senior full-stack engineer and UX architect. Your mission is to build **SpeechSync** — a purpose-built, production-grade web application for Speech-Language Pathology (SLP) clinics. This is a hackathon MVP, so prioritize working, demonstrable features over backend completeness. Use mock data where needed, but the UI must feel real and clinical.

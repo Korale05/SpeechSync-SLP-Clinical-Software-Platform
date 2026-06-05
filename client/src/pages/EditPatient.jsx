@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { UserCheck, ArrowLeft, Loader2 } from 'lucide-react'
 import LoadingScreen from '../components/LoadingScreen'
 
+
 const patientSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
   dob: z.string().refine((val) => !isNaN(Date.parse(val)), {

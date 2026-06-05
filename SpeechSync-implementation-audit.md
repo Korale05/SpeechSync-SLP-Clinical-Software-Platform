@@ -1,216 +1,553 @@
-# SpeechSync Final Verification and Feature Audit
+# Executive Summary
 
-Audit date: 2026-06-04  
-Source of truth: `Prompt.md`  
-Scope: frontend, backend, Prisma schema, RBAC, mock/static data, security, and build/deployment readiness.
+Overall Completion: 62%
 
-## Executive Summary
+Production Readiness: 4/10
 
-Overall completion: 78%  
-MVP completion: 82%  
-Production readiness: 48%  
-Backend completion: 76%  
-Frontend completion: 80%  
-Database completion: 82%  
-Security score: 4/10  
-Deployable now: No
+Critical Issues Count: 8
 
-The application is a functional demo-grade MVP with real React screens, Express routes, Prisma schema, seed data, JWT/bcrypt auth, role-protected frontend routes, and many database-backed workflows. It is not production ready because secrets are committed, DB migrations are unapplied in the current database, several ownership checks are incomplete, lint/test gates fail or are missing, and some source-of-truth features are still static or partial.
+Major Issues Count: 17
 
-## Evidence Highlights
+Minor Issues Count: 14
 
-- Frontend routes exist in `client/src/App.jsx`: login, dashboard, patients, assessments, SOAP, scheduling, billing, audit logs, users, doctors, portal, IEP, and teletherapy.
-- API client uses `VITE_API_URL` fallback and JWT bearer tokens from localStorage in `client/src/services/api.js`.
-- Backend mounts major route groups in `server/index.js`.
-- Prisma schema validates, but `npx prisma migrate status` reports two migrations not applied.
-- `npm run build --prefix client` succeeds.
-- `npm run lint --prefix client` fails because no ESLint config exists.
-- `npm test --prefix server` fails because server has no `test` script.
-- `.env`, `server/.env`, and `docker-compose.yml` contain deploy/security-sensitive values; `docker-compose.yml` exposes a Groq key and JWT secret.
+SpeechSync has a credible hackathon-MVP frontend and a broad Express/Prisma backend, but it is not production-ready. The React client builds successfully and most required screens exist. The backend has many CRUD routes and a valid Prisma schema. The largest problems are runtime-breaking API/schema mismatches, migration drift, incomplete RBAC/data ownership checks, placeholder integrations, and partial workflow connectivity.
 
-## Feature Inventory
+Verification performed:
 
-| Feature | Status | Completion | Evidence | Notes |
-|---|---:|---:|---|---|
-| Login | Fully implemented | 90% | `Login.jsx`, `authStore.js`, `routes/auth.js` | JWT login works; no `/me` refresh endpoint. |
-| Logout | Partially implemented | 60% | `authStore.js`, `Sidebar.jsx` | Client clears localStorage; no backend `/logout`. |
-| JWT/session persistence | Partially implemented | 75% | `authStore.js`, `api.js` | Persists token/user in localStorage; no refresh token, no server session invalidation. |
-| Role-specific navigation | Fully implemented | 85% | `Sidebar.jsx`, `App.jsx`, `ProtectedRoute.jsx` | Admin/SLP/Parent/School route groups exist. |
-| SLP dashboard | Fully implemented | 85% | `Dashboard.jsx`, `appointments.js`, `goals.js`, `sessions.js` | Uses real APIs for appointments, weekly goals, alerts, sessions. |
-| Patient list/profile | Fully implemented | 85% | `PatientList.jsx`, `PatientProfile.jsx`, `patients.js` | DB-backed with tabs and CRUD; some ownership gaps for SLP/school direct access. |
-| Patient create/edit/archive | Fully implemented | 85% | `NewPatient.jsx`, `EditPatient.jsx`, `patients.js` | Admin/SLP can create; optional parent account creation exists. |
-| Doctor/clinician management | Fully implemented | 80% | `DoctorManagement.jsx`, `users.js` | Admin can edit/deactivate/assign patients; creation is through User Management. |
-| User management | Fully implemented | 85% | `UserManagement.jsx`, `users.js` | Create/update/deactivate/activate/reset password/assign patients. |
-| GFTA-3 | Partially implemented | 75% | `AssessmentNew.jsx`, `assessments.js` | 47 frontend stimulus cards and save flow exist; scoring is simplified, images are placeholders. |
-| CELF-5 mini | Partially implemented | 70% | `AssessmentNew.jsx`, `assessments.js` | Six subtests and composite scoring exist; simplified demo scoring. |
-| SOAP notes | Partially implemented | 80% | `SOAPNote.jsx`, `sessions.js`, `ai.js` | Save draft/co-sign/lock exist; no dedicated sign route; locked note checks are incomplete around ownership. |
-| AI SOAP generation | Partially implemented | 75% | `ai.js`, `aiScribe.js`, `SOAPNote.jsx` | Groq SSE route/client exist; functionality depends on `GROQ_API_KEY`. |
-| Teletherapy | Partially implemented | 75% | `Teletherapy.jsx`, `teletherapy.js` | Daily.co room creation with mock fallback, stimuli, scoring, notes, whiteboard; no real join/end endpoints. |
-| Goals/progress | Fully implemented | 85% | `Goals.jsx`, `goals.js`, `GoalProgress` | Create/update/progress history works; SLP/admin mutations protected. |
-| Billing dashboard/scrubber | Partially implemented | 80% | `Billing.jsx`, `billing.js` | Claims, alerts, updates, scrubber exist; no clearinghouse/payment integration. |
-| Parent portal | Partially implemented | 75% | `Portal.jsx`, `patients.js`, `goals.js`, `exercises.js`, `reports.js` | Child data, goals, exercises, report link exist; messaging UI is not implemented on portal. |
-| School/IEP | Partially implemented | 65% | `IEP.jsx`, `iep.js`, `reports.js` | Backend IEP routes exist, but frontend transforms patient data instead of using `/api/iep/students`; export button is static. |
-| Audit logs | Partially implemented | 75% | `AuditLogs.jsx`, route audit writes | Admin view exists; only selected actions are logged. |
-| Reports/PDF | Partially implemented | 60% | `reports.js`, `Portal.jsx` | PDF report routes exist; no full admin reports screen. |
-| Settings | Partially implemented | 35% | `Sidebar.jsx` | Password modal exists in sidebar; no routed settings screen. |
-| File uploads/documents | Not implemented | 0% | `PatientProfile.jsx`, schema | Document tab/links only; no upload/storage route. |
+- `npx prisma validate` in `server`: passed.
+- `npm run build` in `client`: passed, with large bundle warning.
+- `npm run lint` in `client`: failed because no ESLint config exists.
+- `npm test` in `server`: failed because no `test` script exists.
+- Seed was not executed because `server/prisma/seed.js` begins by deleting all existing data.
 
-## Frontend Audit
+---
 
-Authentication: login exists with role tabs and demo fill. Logout is client-side only. Token persistence exists in localStorage.
+# Requirement Coverage Matrix
 
-Admin: dashboard, user management, doctor management, patient management, billing, scheduling, audit logs exist. Reports route is mislabeled to IEP (`Sidebar.jsx` reports link points to `/iep`), and settings is not a full page.
+| Requirement | Status | Completion % | Notes |
+| ----------- | ------ | ------------ | ----- |
+| React 18 + Vite frontend | ✅ Fully Implemented | 95% | Client builds successfully. |
+| Tailwind/shadcn-style UI | ✅ Fully Implemented | 90% | Local UI components exist in `client/src/components/ui`. |
+| React Router v6 routing | ✅ Fully Implemented | 90% | Routes defined in `client/src/App.jsx`. |
+| Zustand auth state | ✅ Fully Implemented | 85% | `client/src/store/authStore.js`. |
+| Recharts dashboards | 🟡 Partially Implemented | 75% | Dashboard/portal/reports use charts, not exhaustive. |
+| React Hook Form + Zod | ❌ Not Implemented | 10% | Dependencies exist, but most forms use local state/manual validation. |
+| Framer Motion page transitions | 🟡 Partially Implemented | 30% | Dependency exists; limited evidence of meaningful use. |
+| Login with demo credentials | ✅ Fully Implemented | 85% | `Login.jsx`, `routes/auth.js`, seed users. |
+| JWT + bcrypt auth | 🟡 Partially Implemented | 80% | Works, but fallback secret remains in code and public register exists. |
+| Role-based frontend routing | 🟡 Partially Implemented | 80% | `ProtectedRoute.jsx`; teletherapy/invoices are broad protected routes. |
+| Backend route-level RBAC | 🟡 Partially Implemented | 60% | `authorize.js` used unevenly; ownership checks incomplete. |
+| SLP dashboard | 🟡 Partially Implemented | 75% | Uses live appointments/goals/sessions, but reports/quick flows incomplete. |
+| Patient list/profile | 🟡 Partially Implemented | 80% | CRUD/profile tabs exist; documents/uploads incomplete. |
+| Patient registration/edit/archive | 🟡 Partially Implemented | 80% | Works in code; migration drift blocks clean deploy. |
+| GFTA-3 assessment | 🟡 Partially Implemented | 70% | 47 stimuli and save flow exist; simplified scoring, placeholder images. |
+| CELF-5 mini | 🟡 Partially Implemented | 70% | UI and save flow exist; simplified scoring. |
+| Azure pronunciation assessment | ❌ Not Implemented | 0% | No Azure Speech integration found. |
+| SOAP editor | 🟡 Partially Implemented | 70% | CRUD works; helper chips, searchable ICD, HEP builder incomplete. |
+| Groq AI Scribe | 🟡 Partially Implemented | 70% | SSE route/client exist; error handling/JSON parsing brittle. |
+| Teletherapy/Daily.co | 🟡 Partially Implemented | 55% | Daily room creation exists with Google Meet mock fallback; UI still says Google Meet. |
+| Goals and progress | 🟡 Partially Implemented | 70% | Goals and progress history persist; workflow linkage and auth incomplete. |
+| Billing dashboard/claims | ⚠️ Implemented but Broken | 55% | Claim scrubber UI expects different backend response shape. |
+| INR invoices/payments | 🟡 Partially Implemented | 75% | Create/view/pay/PDF exist; no delete/refund/discount/currency column. |
+| Parent portal | 🟡 Partially Implemented | 55% | Goals/exercises/report links exist; messaging and appointment join incomplete. |
+| IEP coordinator view | ⚠️ Implemented but Broken | 45% | UI does not call IEP routes; scheduler/export buttons are not wired. |
+| Reports/PDF export | 🟡 Partially Implemented | 55% | IEP and invoice PDFs exist; report links/token handling inconsistent. |
+| Secure messaging | ⚠️ Implemented but Broken | 35% | API exists but parent send path references nonexistent Prisma relation. |
+| Audit logs | ⚠️ Implemented but Broken | 30% | Frontend path and backend Prisma include are broken. |
+| File storage/S3/local uploads | ❌ Not Implemented | 0% | No upload route/storage layer found. |
+| Compliance banner/consent | 🟡 Partially Implemented | 60% | Consent modal in `Layout.jsx`; compliance claims are mostly UI-only. |
+| Mock data file requirement | ❌ Not Implemented | 0% | No `client/src/data/mockData.js`; seed data exists instead. |
+| PostgreSQL + Prisma | 🟡 Partially Implemented | 65% | Schema valid; migrations are stale. |
+| Docker deployment | 🟡 Partially Implemented | 55% | Dockerfiles exist; compose uses placeholder secrets and stale migrations. |
+| CI/CD | ❌ Not Implemented | 0% | No CI workflow found. |
+| Tests | ❌ Not Implemented | 0% | Server has no test script; no test suite found. |
+| Linting | ⚠️ Implemented but Broken | 10% | Script exists, config missing. |
 
-SLP: dashboard, patients, assessments, SOAP notes, teletherapy, goals, scheduling exist. Screens use real API calls; assessment and teletherapy still use placeholder media/stimuli.
+---
 
-Parent: portal exists and uses real child/patient/goal/exercise/report APIs. Secure messaging is not surfaced in the portal UI even though message APIs exist.
+# Fully Implemented Features
 
-School: IEP screen exists but does not use the IEP backend student endpoint. It derives students from `api.patients.getAll('school')`, so school IEP data is partial.
+- Frontend production build: `client` builds with Vite.
+- Basic Express server bootstrapping: `server/index.js`.
+- Prisma schema validation: `server/prisma/schema.prisma` is syntactically valid.
+- Basic JWT login with bcrypt password verification: `server/routes/auth.js`.
+- Frontend route protection by authentication and selected roles: `client/src/components/ProtectedRoute.jsx`.
+- Patient profile loading with tabs for overview, assessments, goals, sessions, billing, documents: `client/src/pages/PatientProfile.jsx`.
+- Basic user/admin management screens and APIs: `client/src/pages/UserManagement.jsx`, `client/src/pages/DoctorManagement.jsx`, `server/routes/users.js`.
+- Invoice payment recording at the API layer: `server/routes/invoices.js`.
 
-## Backend API Audit
+---
 
-| API area | Status | Evidence | Notes |
-|---|---:|---|---|
-| `/api/auth/login` | Working | `routes/auth.js` | bcrypt compare, JWT issue, lastLogin update. |
-| `/api/auth/register` | Broken for production | `routes/auth.js` | Public registration allows caller-provided role. |
-| `/api/auth/me` | Missing | none | Required by prompt, not implemented. |
-| `/api/auth/logout` | Missing | none | Required by prompt, not implemented. |
-| Patient GET/POST/PATCH/DELETE | Working with gaps | `routes/patients.js` | Parent GET protected; SLP/school direct `/:id` lacks assigned-patient check. |
-| User create/update/deactivate/reset | Working | `routes/users.js` | Admin protected. |
-| Doctor create/update/assign | Partially working | `routes/users.js`, `DoctorManagement.jsx` | SLP user creation creates clinician; doctor screen edits/assigns. |
-| Assessment save/scoring | Partially working | `routes/assessments.js` | GET/POST only; no RBAC restriction beyond auth; simplified scoring. |
-| SOAP save/draft/sign/lock | Partially working | `routes/sessions.js` | Status update supports draft/cosign/lock; no explicit sign endpoint. |
-| Teletherapy create room | Partially working | `routes/teletherapy.js` | Create only; no join/end route. |
-| Goals/progress | Working | `routes/goals.js` | Create and progress update protected for SLP/Admin. |
-| Billing claims/scrubber/modifiers | Partially working | `routes/billing.js` | Admin claims CRUD, SLP/Admin scrubber; no external billing integration. |
-| Parent messages/exercises/reports | Partially working | `messages.js`, `exercises.js`, `reports.js` | APIs exist; frontend messaging incomplete. |
+# Partially Implemented Features
 
-## Database Audit
+### Authentication and RBAC
 
-All requested models exist: `User`, `Clinician`, `Patient`, `Session`, `Assessment`, `Goal`, `GoalProgress`, `BillingRecord`, `Appointment`, `Message`, `HomeExercise`, `AuditLog`, `IepStudent`.
+Expected: Secure JWT/bcrypt auth, 4 demo roles, role-specific dashboards/routes, route-level RBAC, parent/school consent.
 
-Incorrect or incomplete:
+Actual: Login, password hashing, seed users, frontend protected routes, server `authenticate`/`authorize`, and consent modal exist.
 
-- `Patient.assignedSlpId`, `Session.clinicianId`, `Appointment.clinicianId`, `Message.fromUserId`, `Message.toUserId`, `AuditLog.userId`, and `IepStudent.patientId` are plain strings without Prisma relations/foreign keys.
-- No explicit indexes beyond `@id` and `@unique`.
-- `BillingRecord.sessionId` is not related to `Session`.
-- Current database is not migrated: both checked-in migrations are pending.
+Missing: `/auth/me`, `/auth/logout`, secure registration gating, consistent data ownership checks, strong secret handling, full route-level least privilege.
 
-## RBAC and Permission Leaks
+Files: `server/routes/auth.js`, `server/middleware/authenticate.js`, `server/middleware/authorize.js`, `client/src/store/authStore.js`, `client/src/App.jsx`, `client/src/components/Layout.jsx`.
 
-Frontend RBAC exists through `ProtectedRoute`. Backend RBAC exists through `authorize`, but not consistently.
+Completion: 75%.
 
-High-risk leaks:
+### Patient Registration and Profile
 
-- Public `/api/auth/register` can create arbitrary roles, including admin.
-- `GET /api/patients/:id` only blocks parents outside their child. It does not block SLPs from direct access to unassigned patients or school coordinators from unrelated students.
-- `GET /api/goals/patient/:patientId`, `GET /api/exercises/patient/:patientId`, `GET /api/sessions/:id`, and several generic list routes rely on auth but have incomplete ownership checks.
-- `GET /api/patients/clinicians/all` exposes clinician list to any authenticated user.
-- Teletherapy route allows SLP/Admin by role, but does not verify the appointment belongs to that SLP.
+Expected: Patient CRUD, demographics, guardian/insurance/diagnoses/assigned SLP, parent portal account, history tabs.
 
-## Mock/Static Data Audit
+Actual: Create/edit/archive/list/profile pages and routes exist. Parent account creation option exists.
 
-No `client/src/data/mockData.js` dependency remains in the source. Most dashboards use real APIs.
+Missing: Fresh migrations for current patient columns; stronger validation; hard relation between patient and clinician; document upload/storage.
 
-Remaining static/placeholder dependencies:
+Files: `client/src/pages/NewPatient.jsx`, `EditPatient.jsx`, `PatientList.jsx`, `PatientProfile.jsx`, `server/routes/patients.js`, `server/prisma/schema.prisma`.
 
-- GFTA stimuli images are placeholder URLs in `AssessmentNew.jsx`.
-- Teletherapy stimuli and camera placeholders are static in `Teletherapy.jsx`.
-- Parent portal exercise thumbnails use placeholder images in `Portal.jsx`.
-- IEP frontend uses transformed patient records instead of real `IepStudent` endpoint.
-- Login demo credentials are hardcoded as required by `Prompt.md`.
+Completion: 80%.
 
-## Security Audit
+### Scheduling
 
-Critical:
+Expected: Create/edit/delete appointments, view calendar/grid, update statuses, persistent teletherapy link, bulk screenings.
 
-- Secrets are committed: `.env`, `server/.env`, and `docker-compose.yml`.
-- `docker-compose.yml` contains a real-looking Groq key and JWT secret.
-- Public registration allows self-selected roles.
+Actual: Appointment create/list/status update exists. Scheduling UI creates appointments and status changes.
 
-High:
+Missing: Appointment edit/delete; full calendar/time-grid; session linkage bug; IEP bulk scheduler UI; parent appointment details.
 
-- JWT fallback secret remains in auth and middleware code even though server startup checks env.
-- Ownership checks are incomplete across patient, goals, sessions, exercises, messages, teletherapy, and school views.
-- CORS falls back to `*` in `server/index.js`.
+Files: `client/src/pages/Scheduling.jsx`, `server/routes/appointments.js`, `server/routes/iep.js`.
 
-Medium:
+Completion: 60%.
 
-- No refresh token handling or server-side logout.
-- Validation/sanitization is minimal despite `express-validator` dependency.
-- Rate limiting exists globally but not separately tightened for auth.
-- Audit logging is partial.
+### AI Assessment
 
-Low:
+Expected: Full GFTA-3/CELF-5 workflows with scoring, report card, save, PDF, link-to-goal, accurate normative lookup.
 
-- Tokens are stored in localStorage.
-- Large frontend bundle warning after build.
+Actual: GFTA-3 has 47 placeholder stimuli, timer, scoring UI, diacritic helper, save to DB. CELF-5 mini has 6 subtests and save flow.
 
-## Build and Deployment Audit
+Missing: Normative lookup tables, real stimulus assets, PDF generation from assessment, goal linking, Azure pronunciation assessment.
 
-| Command | Result | Evidence |
-|---|---:|---|
-| `npm run build --prefix client` | Passed | Vite built successfully; bundle warning at 1,094 kB JS. |
-| `npm run lint --prefix client` | Failed | ESLint config missing. |
-| `npm test --prefix server` | Failed | Missing `test` script. |
-| `npx prisma validate` | Passed | Schema valid. |
-| `npx prisma migrate status` | Failed for readiness | Database reachable, but two migrations pending. |
-| Backend starts | Not verified in long-running mode | `server/index.js` requires env and starts Express, but current DB is not migrated. |
-| Seed works | Not run | Unsafe to seed while migrations are pending. |
+Files: `client/src/pages/AssessmentNew.jsx`, `server/routes/assessments.js`.
 
-## Feature Completion Matrix
+Completion: 70%.
 
-| Feature | Status | Completion | Backend | Frontend | DB |
-|---|---:|---:|---:|---:|---:|
-| Auth/login/session | Partial | 75% | Partial | Full | Full |
-| RBAC | Partial | 65% | Partial | Full | N/A |
-| SLP dashboard | Full | 85% | Full | Full | Full |
-| Admin dashboard | Partial | 70% | Partial | Partial | Full |
-| Patient management | Full | 85% | Full | Full | Partial |
-| User/doctor management | Full | 82% | Full | Full | Partial |
-| Assessment GFTA/CELF | Partial | 72% | Partial | Full | Full |
-| SOAP notes | Partial | 80% | Partial | Full | Full |
-| AI scribe | Partial | 75% | Partial | Full | N/A |
-| Teletherapy | Partial | 75% | Partial | Full | Partial |
-| Goals/progress | Full | 85% | Full | Full | Full |
-| Billing | Partial | 80% | Full | Full | Full |
-| Parent portal | Partial | 75% | Partial | Partial | Full |
-| IEP/school | Partial | 65% | Partial | Partial | Partial |
-| Reports/PDF | Partial | 60% | Partial | Partial | Partial |
-| Audit logs | Partial | 75% | Partial | Full | Full |
-| Settings | Partial | 35% | Partial | Partial | Partial |
-| Documents/uploads | Missing | 0% | Missing | Partial | Missing |
+### SOAP Notes and AI Scribe
 
-## Remaining Critical Issues
+Expected: SOAP editor with CPT/ICD suggestions, helper chips, goal linkage, HEP builder, AI streaming, save draft/co-sign/sign-lock.
 
-1. Remove committed secrets and rotate exposed keys.
-2. Lock or remove public role-selectable registration.
-3. Apply migrations and verify seed.
-4. Add ownership checks to all patient-scoped routes.
-5. Add `/me` and `/logout` or document that auth is stateless.
-6. Add ESLint config and server test script.
-7. Wire IEP frontend to IEP backend and implement export/scheduler actions.
+Actual: SOAP fields, patient context, goal checkbox linkage, Groq SSE, save draft/co-sign/lock exist.
 
-## Final Verdict
+Missing: Helper chips, HEP builder, searchable ICD dropdown, robust streamed JSON parsing, route ownership checks for updates.
 
-1. Is SpeechSync MVP complete? No, but it is close demo-grade.
-2. Can Admin create Doctors? Yes, via admin user creation with role `SLP`; doctor management edits/assigns.
-3. Can Admin create Patients? Yes.
-4. Can Admin create Parent accounts? Yes, via user management and patient create parent-account option.
-5. Can Admin create School Coordinator accounts? Yes, via user management.
-6. Can Doctors create Patients? Yes, SLP role can create patients.
-7. Can Doctors create SOAP Notes? Yes.
-8. Can Doctors perform Assessments? Yes.
-9. Can Parents login and view progress? Yes, for linked child data.
-10. Can School Coordinators login and manage IEPs? Partially; can view an IEP-style page, but management/export is incomplete.
-11. Is Teletherapy functional? Partially; room creation/mock fallback and clinical panel exist, but join/end lifecycle is incomplete.
-12. Is Billing functional? Partially; internal dashboard/scrubber works, no real payer integration.
-13. Is AI SOAP generation functional? Conditionally; route/client exist, requires valid Groq key.
-14. Is the application deployable? No, due to committed secrets, pending migrations, missing lint/test gates, and security gaps.
-15. Is the application production ready? No.
+Files: `client/src/pages/SOAPNote.jsx`, `client/src/services/aiScribe.js`, `server/routes/sessions.js`, `server/routes/ai.js`.
 
-## Remaining Work
+Completion: 70%.
 
-MVP complete: fix migrations/seed, auth `/me`, logout or stateless auth documentation, ownership checks, IEP frontend wiring, lint config, and smoke tests.
+### Teletherapy
 
-Production ready: secret rotation, CORS hardening, route validation, full RBAC/ownership tests, secure token strategy, audit coverage, file storage, real teletherapy lifecycle, billing integration boundaries, CI, and deployment env documentation.
+Expected: Daily.co embedded room, controls, stimuli, exercises, notes, whiteboard, end-session SOAP prefill.
+
+Actual: Room creation endpoint exists; fallback URL stored; UI has timer, controls, stimuli, exercise scoring, notes, whiteboard, and end-session creates a draft SOAP session.
+
+Missing: Real embedded Daily iframe in current UI, persisted real-time attempts, persisted whiteboard, recording/media storage, parent join workflow, appointment/session linkage.
+
+Files: `client/src/pages/Teletherapy.jsx`, `server/routes/teletherapy.js`, `server/routes/sessions.js`.
+
+Completion: 55%.
+
+### Goals and Progress
+
+Expected: SMART goal creation, progress chart/history, clickable data points, status badges.
+
+Actual: Goal creation, patient goal list, progress history model/routes, charting in goals page.
+
+Missing: Fine-grained authorization; richer session/SOAP linkage; clickable SOAP snippets not fully verified.
+
+Files: `client/src/pages/Goals.jsx`, `server/routes/goals.js`, `server/prisma/schema.prisma`.
+
+Completion: 70%.
+
+### Billing and Invoicing
+
+Expected: Claim dashboard, CPT reference, Medicare tracker, scrubber, bill CRUD, INR invoices, tax/discount/notes, statuses, payment history, refunds.
+
+Actual: Legacy claim table and scrubber route exist. New invoice system supports create/list/detail/payment/PDF and INR formatting.
+
+Missing: Discount, refund, invoice delete, full invoice edit, stored currency field, assessment-to-billing automation, scrubber response contract fix.
+
+Files: `client/src/pages/Billing.jsx`, `AdminBilling.jsx`, `InvoiceDetails.jsx`, `client/src/components/billing/PatientBillingTab.jsx`, `server/routes/billing.js`, `server/routes/invoices.js`.
+
+Completion: 70%.
+
+### Parent Portal
+
+Expected: Progress, upcoming appointment, join teletherapy, exercises, secure messages, report downloads.
+
+Actual: Child data, goals, exercise list, mark complete, and report links exist.
+
+Missing: Working message UI, real next appointment display, correct teletherapy URL from appointment, tokenized report downloads.
+
+Files: `client/src/pages/Portal.jsx`, `server/routes/exercises.js`, `server/routes/messages.js`, `server/routes/reports.js`.
+
+Completion: 55%.
+
+### IEP Coordinator
+
+Expected: Student list, bulk screening scheduler, milestone timeline, FERPA PDF export.
+
+Actual: IEP page displays school-like data derived from patients. Backend IEP routes exist.
+
+Missing: UI does not call `/api/iep/students`; schedule/export buttons have no handlers; migration drift; nullable patient appointment bug.
+
+Files: `client/src/pages/IEP.jsx`, `server/routes/iep.js`.
+
+Completion: 45%.
+
+### Reports
+
+Expected: Progress reports, IEP exports, billing revenue reports, downloadable PDFs.
+
+Actual: IEP/patient report PDFs and invoice/receipt PDFs exist. Revenue report API/page exists.
+
+Missing: Assessment PDFs, monthly parent reports, consistent token auth in links, polished report generation coverage.
+
+Files: `server/routes/reports.js`, `server/routes/invoices.js`, `client/src/pages/AdminBillingReports.jsx`, `PatientProfile.jsx`, `Portal.jsx`.
+
+Completion: 55%.
+
+---
+
+# Missing Features
+
+- Azure Cognitive Services pronunciation assessment.
+- AWS S3/local file uploads for patient documents.
+- `client/src/data/mockData.js` as specified in the original prompt.
+- CI/CD workflow.
+- Automated tests.
+- Working ESLint configuration.
+- Assessment PDF generation and explicit goal linking.
+- Refund workflow.
+- Discount field/workflow.
+- Stored invoice currency field.
+- SMS/email integrations.
+- Notification center beyond toasts/static alerts.
+- Direct `/auth/me` and `/auth/logout`.
+- Appointment edit/delete.
+- Full document center with intake/consent/progress files.
+
+---
+
+# Bugs and Issues
+
+## Critical
+
+### Migration drift
+
+- Description: `schema.prisma` defines many models/columns that committed migrations do not create.
+- Impact: Fresh `prisma migrate deploy` will create an old database missing appointments, messages, audit logs, IEP, invoices, payments, and many patient columns.
+- Files involved: `server/prisma/schema.prisma`, `server/prisma/migrations/*`.
+- Recommended fix: Generate a new migration from current schema and validate with a clean database.
+
+### Audit logs route is broken
+
+- Description: `server/routes/auditLogs.js` uses `include: { user: ... }`, but `AuditLog` has no relation to `User`.
+- Impact: Admin audit logs page fails at runtime.
+- Files involved: `server/routes/auditLogs.js`, `server/prisma/schema.prisma`.
+- Recommended fix: Add `user User @relation(...)` to `AuditLog` or remove the include and manually join.
+
+### Audit logs frontend calls wrong URL
+
+- Description: `AuditLogs.jsx` calls `api.get('/api/audit-logs...')`; helper already prepends `/api`.
+- Impact: Client requests `/api/api/audit-logs`.
+- Files involved: `client/src/pages/AuditLogs.jsx`, `client/src/services/api.js`.
+- Recommended fix: Change endpoint to `/audit-logs?...`.
+
+### Parent secure messaging route is broken
+
+- Description: `messages.js` includes `assignedSlp`, but `Patient` has no `assignedSlp` relation.
+- Impact: Parent message sending crashes.
+- Files involved: `server/routes/messages.js`, `server/prisma/schema.prisma`.
+- Recommended fix: Add relation from `Patient.assignedSlpId` to `Clinician.id` or query clinician separately.
+
+### IEP bulk screening can violate schema
+
+- Description: `server/routes/iep.js` may create appointment with `patientId: null`, but schema requires `patientId String`.
+- Impact: Bulk screening can fail for IEP students without linked patient.
+- Files involved: `server/routes/iep.js`, `server/prisma/schema.prisma`.
+- Recommended fix: Make `Appointment.patientId` optional with relation or require/link patients before scheduling.
+
+### Claim scrubber UI/backend contract mismatch
+
+- Description: Backend returns `passed`, `issues`, `suggestedModifiers`; `Billing.jsx` expects `clean`, `flags`, `suggestions`.
+- Impact: Scrubber can misreport or throw when processing claims.
+- Files involved: `client/src/pages/Billing.jsx`, `server/routes/billing.js`.
+- Recommended fix: Align response contract and add tests.
+
+### Secrets and weak deployment defaults
+
+- Description: `.env` exists locally; `docker-compose.yml` hardcodes `production_password` and placeholder `JWT_SECRET`.
+- Impact: Unsafe deployment and secret leakage risk.
+- Files involved: `.env`, `.gitignore`, `.env.example`, `docker-compose.yml`, `server/routes/auth.js`, `authenticate.js`.
+- Recommended fix: Remove committed secrets from git history, rotate keys, require strong envs, remove fallback secret.
+
+### Missing current-schema migrations block Docker deployment
+
+- Description: `server/Dockerfile` runs `npx prisma migrate deploy`, but migrations are stale.
+- Impact: Docker stack will start with DB incompatible with current server code.
+- Files involved: `server/Dockerfile`, `docker-compose.yml`, `server/prisma/migrations`.
+- Recommended fix: Generate and commit migrations before using Docker deploy.
+
+## Major
+
+- Public `/api/auth/register` allows user creation without admin authorization.
+- Broad CORS default uses `origin: '*'`.
+- `authenticate.js` accepts JWT in query string.
+- `InvoiceDetails.jsx` reads `localStorage.getItem('token')`, but auth stores `speechsync_token`.
+- Parent portal report link lacks auth token.
+- Appointment creation creates a draft session but does not update `Appointment.sessionId`.
+- No appointment edit/delete route.
+- Sessions update route lacks role restriction and ownership check.
+- Assessments/goals GET routes do not enforce patient ownership.
+- Billing has two parallel systems: legacy `BillingRecord` claims and newer `Invoice` payments.
+- Billing dashboard uses dollar values while invoice system uses INR.
+- AI Scribe has weak streamed JSON parsing and minimal user-facing error reporting.
+- Teletherapy UI advertises Google Meet despite Daily.co backend route.
+- IEP UI bypasses IEP APIs and has unwired schedule/export buttons.
+- No file upload/storage layer.
+- No automated tests.
+- ESLint script exists but config is missing.
+
+## Minor
+
+- Large frontend bundle warning after production build.
+- Placeholder images in GFTA-3, teletherapy stimuli, and portal exercises.
+- Compliance/security language is stronger than actual implementation.
+- No meaningful TODO/FIXME/HACK comments in source; prompt files contain TODO-style checklist text.
+- Inconsistent naming between `Billing`, `AdminBilling`, and patient billing components.
+- Some pages rely on all-patients/all-sessions fetches rather than scoped endpoints.
+- Limited mobile-specific verification; responsive classes exist but not tested.
+- Minimal backend request validation and no express-validator usage despite dependency.
+
+---
+
+# Database Audit
+
+Tables:
+
+- `User`: auth users; used.
+- `Patient`: clinical patient record; used.
+- `Session`: SOAP/session data; used.
+- `Assessment`: standardized assessment results; used.
+- `Goal`: therapy goals; used.
+- `GoalProgress`: progress history; used by routes, missing migration.
+- `BillingRecord`: legacy claim billing; used.
+- `Clinician`: SLP profile; used.
+- `Appointment`: scheduling/teletherapy; used, missing migration.
+- `HomeExercise`: parent home program; used, missing migration.
+- `Message`: secure messages; used, missing migration and relation gaps.
+- `AuditLog`: audit trail; used but broken, missing migration and relation.
+- `IepStudent`: school module; backend uses, frontend mostly bypasses, missing migration.
+- `Invoice`: INR invoice; used, missing migration.
+- `InvoiceItem`: invoice line item; used, missing migration.
+- `Payment`: payment history; used, missing migration.
+
+Missing Tables:
+
+- Not missing from `schema.prisma`, but missing from committed migrations: `GoalProgress`, `Appointment`, `HomeExercise`, `Message`, `AuditLog`, `IepStudent`, `Invoice`, `InvoiceItem`, `Payment`.
+
+Migration Issues:
+
+- Only two migrations exist: initial core schema and `Patient.metadata`.
+- Current schema has substantially outgrown migrations.
+- Docker deploy uses migrations, so clean deploy will not match application code.
+
+Data Integrity Issues:
+
+- Missing FK relations for `Patient.assignedSlpId`, `Session.clinicianId`, `Appointment.clinicianId`, `Message.fromUserId/toUserId`, `AuditLog.userId`, `IepStudent.patientId`, `BillingRecord.sessionId`.
+- Very few indexes beyond primary keys and unique constraints.
+- `Appointment.patientId` is required, but IEP route may create null patient appointments.
+- Currency is not modeled for invoices/payments.
+- Refunds/discounts are not modeled.
+
+---
+
+# Backend Audit
+
+Implemented APIs:
+
+- Auth: `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/change-password`.
+- Patients: `GET/POST /api/patients`, `GET/PATCH/DELETE /api/patients/:id`, `GET /api/patients/clinicians/all`.
+- Sessions: `GET/POST /api/sessions`, `GET/PUT/DELETE /api/sessions/:id`.
+- Assessments: `GET/POST /api/assessments`.
+- Billing claims: `GET/POST /api/billing`, `GET /api/billing/alerts`, `GET /api/billing/patient/:patientId`, `PUT/DELETE /api/billing/:id`, `POST /api/billing/scrub`.
+- Invoices/payments: `POST/GET /api/invoices`, `GET/PATCH /api/invoices/:id`, `POST/GET /api/payments`, PDF routes, revenue report.
+- Goals: goals list, patient goals, progress history, create/update progress.
+- Appointments: list/today/next/get/create/status update.
+- AI: `POST /api/ai/generate-soap`.
+- Teletherapy: `POST /api/teletherapy/create-room`.
+- Exercises: list/create/complete/status.
+- Messages: inbox/history/send/read.
+- IEP: students/schedule/report/bulk export.
+- Users: admin user and clinician management.
+- Reports: IEP/patient progress PDFs.
+
+Missing APIs:
+
+- `/api/auth/me`, `/api/auth/logout`.
+- Appointment edit/delete.
+- Assessment PDF export and goal-link route.
+- File upload/document APIs.
+- Refund API.
+- Full invoice delete and line-item edit route.
+- SMS/email notification APIs.
+
+Broken APIs:
+
+- `GET /api/audit-logs`: invalid Prisma relation include.
+- `POST /api/messages` for parent: invalid `assignedSlp` include.
+- `POST /api/iep/schedule-screening`: may pass null `patientId`.
+- `POST /api/billing/scrub` does not match client contract.
+
+---
+
+# Frontend Audit
+
+Implemented Screens:
+
+- Login, Dashboard, Patient List, New Patient, Edit Patient, Patient Profile, Assessment New, SOAP Note, Teletherapy, Goals, Billing, Parent Portal, IEP, Scheduling, Audit Logs, User Management, Doctor Management, Admin Billing, Invoice Details, Billing Reports.
+
+Missing Screens:
+
+- Settings screen despite sidebar references.
+- Dedicated progress report viewer.
+- Secure messaging screen/thread UI.
+- Document upload/management screen.
+- Full reports dashboard outside billing/IEP.
+
+Broken Screens:
+
+- Audit Logs: wrong endpoint plus broken backend.
+- Billing claim scrubber: response mismatch.
+- IEP: key actions are unwired and data source does not use IEP backend.
+- Invoice PDF/receipt download likely auth-broken due token key mismatch.
+- Parent portal message button is not wired.
+
+Frontend Quality:
+
+- Loading states exist on most pages.
+- Error states exist on some pages, not consistently.
+- Forms mostly use local state/manual validation instead of React Hook Form + Zod.
+- React Query is used broadly.
+- Mobile responsiveness appears partially addressed with Tailwind responsive classes, but not verified with browser screenshots.
+
+---
+
+# Security Audit
+
+Authentication:
+
+- JWT login works.
+- Passwords are bcrypt-hashed.
+- Token stored in localStorage, which is acceptable for MVP but XSS-sensitive.
+- Fallback JWT secret remains in multiple files.
+
+Authorization:
+
+- `authorize()` middleware exists and is used on many write/admin routes.
+- Patient ownership checks are incomplete.
+- Parent access is checked for some patient/session/invoice routes, but not all goal/assessment/exercise paths.
+- Public registration is a serious issue.
+
+Secrets:
+
+- `.env` exists in the workspace.
+- `.gitignore` ignores `.env`, but history status was not rewritten.
+- `docker-compose.yml` contains hardcoded DB password and placeholder JWT/Groq secrets.
+
+Input Validation:
+
+- Mostly manual, shallow validation.
+- `express-validator` is installed but not meaningfully used.
+- Many routes trust IDs, arrays, statuses, and amounts.
+
+OWASP concerns:
+
+- Broken access control risk on patient-scoped APIs.
+- Sensitive token in query string supported by `authenticate.js`.
+- Secret management weakness.
+- No CSRF protection, though JWT Authorization header reduces exposure.
+- No security headers/helmet.
+- No audit immutability despite UI claims.
+
+---
+
+# Technical Debt
+
+- Schema and migrations are out of sync.
+- Missing Prisma relations force manual lookups and cause runtime bugs.
+- Two billing domains coexist without clear ownership: claims vs invoices.
+- Frontend uses mixed API helper styles.
+- Several screens rely on broad collection fetches instead of scoped endpoints.
+- No automated test harness.
+- No lint config.
+- Placeholder media and mock video remain in clinical flows.
+- Compliance claims exceed implemented technical controls.
+- Docker uses placeholder secrets and stale migration path.
+- No CI/CD.
+- No typed API contract or shared validation schemas.
+- Minimal centralized error handling and no structured logging.
+
+---
+
+# TODO/FIXME/HACK Findings
+
+No source-code `TODO`, `FIXME`, or `HACK` markers were found in implementation files.
+
+Prompt/documentation findings:
+
+- `Prompt.md` explicitly permits mock data and placeholder assets for hackathon MVP.
+- `new prompt.md` identifies prior gaps such as no `mockData.js`, Google Meet placeholder, static parent portal, missing reports/uploads/messaging.
+- `SpeechSync-implementation-audit.md` previously listed several partial/missing features and has now been replaced by this report.
+
+Placeholder/mock implementation findings:
+
+- `server/routes/teletherapy.js`: mock Google Meet fallback when Daily.co is missing or fails.
+- `client/src/pages/Teletherapy.jsx`: static stimulus/media placeholders and Google Meet-oriented UI.
+- `client/src/pages/AssessmentNew.jsx`: placeholder stimulus images.
+- `client/src/pages/Portal.jsx`: placeholder exercise thumbnails.
+
+---
+
+# Recommended Next Tasks (Priority Order)
+
+1. Fix database deployability and runtime-broken APIs.
+   - Effort: 2-3 engineering days.
+   - Work: generate/commit migration for current schema; add missing Prisma relations; fix audit logs, messages, IEP scheduling, and scrubber contract.
+
+2. Harden authentication, authorization, and secrets.
+   - Effort: 2-3 engineering days.
+   - Work: remove fallback JWT secrets, disable public registration or make admin-only, rotate/remove committed secrets, restrict CORS, remove query-token auth, enforce patient ownership on all scoped APIs.
+
+3. Complete billing release requirements.
+   - Effort: 2-4 engineering days.
+   - Work: add invoice delete/full edit, discount, refund, stored currency, payment history in patient timeline, assessment/session billing linkage, INR-only consistency.
+
+4. Wire incomplete user workflows.
+   - Effort: 3-5 engineering days.
+   - Work: IEP page to `/api/iep/*`, parent secure messaging UI, real upcoming appointment/join link, appointment edit/delete, teletherapy session link persistence.
+
+5. Add quality gates.
+   - Effort: 2-3 engineering days.
+   - Work: ESLint config, backend tests for critical routes, frontend smoke tests, CI workflow running build/lint/tests/Prisma validation.
+
+6. Replace placeholder integrations/assets where demo-critical.
+   - Effort: 3-6 engineering days.
+   - Work: Daily.co iframe, file uploads, assessment PDFs, document center, real stimulus assets or locally bundled placeholders.
+
+---
+
+# Final Verdict
+
+- Is MVP complete? No.
+- Is project deployable? No, not safely. The frontend builds, but migrations are stale and Docker deploy will not create the current schema.
+- Is project production ready? No.
+- Exact features blocking release: current-schema migrations, audit logs, parent messaging, IEP scheduling/export wiring, claim scrubber, auth/authorization hardening, secret cleanup, invoice/report token bugs, appointment/session linkage.
+- Estimated remaining work: 38%.
+- Estimated engineering days required to finish: 14-24 engineering days for a reliable MVP; 30+ days for production-grade security/compliance hardening.

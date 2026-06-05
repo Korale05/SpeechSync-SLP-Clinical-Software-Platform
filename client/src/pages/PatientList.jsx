@@ -14,6 +14,8 @@ import useAuthStore, { ROLES } from '../store/authStore'
 import LoadingScreen from '../components/LoadingScreen'
 import { toast } from 'react-hot-toast'
 
+
+
 const PatientList = () => {
   const { user } = useAuthStore()
   const navigate = useNavigate()

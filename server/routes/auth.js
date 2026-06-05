@@ -2,12 +2,14 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
+import authenticate from '../middleware/authenticate.js';
+import { authorize } from '../middleware/authorize.js';
 
 const router = Router();
 const prisma = new PrismaClient();
 
-// Register a new user
-router.post('/register', async (req, res) => {
+// Register a new user (Admin only)
+router.post('/register', authenticate, authorize('ADMIN'), async (req, res) => {
   const { email, password, role, name, credentials, specialty, licenseNo } = req.body;
 
   try {
@@ -41,7 +43,7 @@ router.post('/register', async (req, res) => {
 
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET || 'fallback_secret',
+      process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
 
@@ -83,15 +85,25 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    // Update lastLogin
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastLogin: new Date() }
-    });
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: { lastLogin: new Date() }
+      }),
+      prisma.auditLog.create({
+        data: {
+          userId: user.id,
+          action: 'LOGIN',
+          resource: 'USER',
+          resourceId: user.id,
+          details: { email: user.email, role: user.role }
+        }
+      })
+    ]);
 
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET || 'fallback_secret',
+      process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
 
@@ -122,7 +134,7 @@ router.post('/change-password', async (req, res) => {
   const jwt_lib = (await import('jsonwebtoken')).default;
   let decoded;
   try {
-    decoded = jwt_lib.verify(authHeader.split(' ')[1], process.env.JWT_SECRET || 'fallback_secret');
+    decoded = jwt_lib.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
@@ -168,6 +180,50 @@ router.post('/change-password', async (req, res) => {
     res.json({ success: true, message: 'Password changed successfully.' });
   } catch (error) {
     console.error('Change password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /auth/me — Get details of current authenticated user
+router.get('/me', authenticate, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: { clinician: true },
+    });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.clinician ? user.clinician.name : (user.name || user.email.split('@')[0]),
+        clinician: user.clinician,
+      }
+    });
+  } catch (error) {
+    console.error('Get me error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /auth/logout — Log out user and record in AuditLog
+router.post('/logout', authenticate, async (req, res) => {
+  try {
+    await prisma.auditLog.create({
+      data: {
+        userId: req.user.id,
+        action: 'LOGOUT',
+        resource: 'USER',
+        resourceId: req.user.id,
+        details: { email: req.user.email }
+      }
+    });
+    res.json({ success: true, message: 'Logged out successfully.' });
+  } catch (error) {
+    console.error('Logout error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

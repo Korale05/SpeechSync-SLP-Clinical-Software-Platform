@@ -9,6 +9,8 @@ const Tabs = React.forwardRef(({ className, defaultValue, onValueChange, childre
     if (onValueChange) onValueChange(newValue)
   }
 
+
+  
   return (
     <div ref={ref} className={cn("w-full", className)} {...props}>
       {React.Children.map(children, (child) => {

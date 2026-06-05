@@ -6,6 +6,24 @@ import { authorize } from '../middleware/authorize.js';
 const router = Router();
 const prisma = new PrismaClient();
 
+async function canAccessSession(user, session) {
+  if (user.role === 'ADMIN') return true;
+  if (user.role === 'SLP') {
+    const clinician = await prisma.clinician.findUnique({
+      where: { userId: user.id }
+    });
+    return !!clinician && session.clinicianId === clinician.id;
+  }
+  if (user.role === 'PARENT') {
+    const patient = session.patient || await prisma.patient.findUnique({
+      where: { id: session.patientId },
+      select: { parentUserId: true }
+    });
+    return patient?.parentUserId === user.id;
+  }
+  return false;
+}
+
 // Get all sessions
 router.get('/', authenticate, async (req, res) => {
   try {
@@ -63,8 +81,8 @@ router.get('/:id', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    // Parent HIPAA Check
-    if (req.user.role === 'PARENT' && session.patient?.parentUserId !== req.user.id) {
+    const canAccess = await canAccessSession(req.user, session);
+    if (!canAccess) {
       return res.status(403).json({ error: 'Forbidden: Access restricted to your child\'s sessions.' });
     }
 
@@ -128,9 +146,16 @@ router.put('/:id', authenticate, async (req, res) => {
   const { dateOfService, durationMinutes, cptCode, icd10Codes, telehealthSession, soapNote, exercises, mediaFiles, status } = req.body;
 
   try {
-    const session = await prisma.session.findUnique({ where: { id } });
+    const session = await prisma.session.findUnique({
+      where: { id },
+      include: { patient: true }
+    });
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
+    }
+    const canAccess = await canAccessSession(req.user, session);
+    if (!canAccess || req.user.role === 'PARENT') {
+      return res.status(403).json({ error: 'Forbidden: Cannot modify this session.' });
     }
 
     // A signed/locked session cannot be edited unless by ADMIN (or check compliance)
@@ -189,9 +214,16 @@ router.delete('/:id', authenticate, authorize('SLP', 'ADMIN'), async (req, res) 
   const { id } = req.params;
 
   try {
-    const session = await prisma.session.findUnique({ where: { id } });
+    const session = await prisma.session.findUnique({
+      where: { id },
+      include: { patient: true }
+    });
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
+    }
+    const canAccess = await canAccessSession(req.user, session);
+    if (!canAccess) {
+      return res.status(403).json({ error: 'Forbidden: Cannot delete this session.' });
     }
 
     if (session.status === 'LOCKED' && req.user.role !== 'ADMIN') {

@@ -13,7 +13,7 @@ const AuditLogs = () => {
 
   const { data, isLoading } = useQuery({
     queryKey: ['audit-logs', page, actionFilter],
-    queryFn: () => api.get(`/api/audit-logs?page=${page}&limit=15${actionFilter ? `&action=${actionFilter}` : ''}`).then(res => res.data)
+    queryFn: () => api.get(`/audit-logs?page=${page}&limit=15${actionFilter ? `&action=${actionFilter}` : ''}`).then(res => res.data)
   })
 
   if (isLoading) return <LoadingScreen />

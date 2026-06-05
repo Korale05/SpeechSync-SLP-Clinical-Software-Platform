@@ -33,15 +33,32 @@ router.post('/schedule-screening', authenticate, authorize('SCHOOL_COORDINATOR',
     const clinician = await prisma.clinician.findFirst();
     const clinicianId = clinician ? clinician.id : 'ADMIN';
 
-    // Create appointments for each student (30 min increments)
-    const appointments = await Promise.all(studentIds.map(async (sid, i) => {
-      // Fetch student name
+    // Validate all students have a valid patientId linked
+    const invalidStudents = [];
+    const validStudents = [];
+    for (const sid of studentIds) {
       const student = await prisma.iepStudent.findUnique({ where: { id: sid } });
-      const studentName = student ? student.name : `Student #${sid}`;
+      if (!student) {
+        return res.status(404).json({ error: `Student with ID ${sid} not found.` });
+      }
+      if (!student.patientId) {
+        invalidStudents.push(student.name);
+      } else {
+        validStudents.push(student);
+      }
+    }
 
+    if (invalidStudents.length > 0) {
+      return res.status(400).json({
+        error: `The following students do not have linked patient profiles: ${invalidStudents.join(', ')}. Please link them before scheduling.`
+      });
+    }
+
+    // Create appointments for each student (30 min increments)
+    const appointments = await Promise.all(validStudents.map(async (student, i) => {
       return prisma.appointment.create({
         data: {
-          patientId: student?.patientId || null,
+          patientId: student.patientId,
           clinicianId,
           startTime: new Date(new Date(date).getTime() + i * 30 * 60 * 1000), // 30 min slots
           durationMinutes: 30,

@@ -11,6 +11,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { UserPlus, ArrowLeft, Loader2 } from 'lucide-react'
 
+
+
 // Schema validation using Zod
 const patientSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),

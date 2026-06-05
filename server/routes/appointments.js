@@ -6,6 +6,23 @@ import { authorize } from '../middleware/authorize.js';
 const router = Router();
 const prisma = new PrismaClient();
 
+async function canAccessPatient(user, patientId) {
+  if (user.role === 'ADMIN') return true;
+
+  const patient = await prisma.patient.findUnique({
+    where: { id: patientId },
+    select: { parentUserId: true, assignedSlp: { select: { userId: true } } }
+  });
+  if (!patient) return false;
+  if (user.role === 'PARENT') return patient.parentUserId === user.id;
+  if (user.role === 'SLP') return patient.assignedSlp?.userId === user.id;
+  return false;
+}
+
+async function canAccessAppointment(user, appointment) {
+  return canAccessPatient(user, appointment.patientId);
+}
+
 // GET /api/appointments/today — returns today's appointments for the logged-in SLP
 router.get('/today', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
   try {
@@ -92,6 +109,10 @@ router.get('/', authenticate, async (req, res) => {
       whereClause.startTime = { gte: start, lte: end };
     }
 
+    if (req.user.role === 'PARENT') {
+      whereClause.patient = { parentUserId: req.user.id };
+    }
+
     // Filter by clinician if role is SLP
     if (req.user.role === 'SLP') {
       const clinician = await prisma.clinician.findUnique({
@@ -100,6 +121,8 @@ router.get('/', authenticate, async (req, res) => {
       if (clinician) {
         whereClause.clinicianId = clinician.id;
       }
+    } else if (req.user.role === 'SCHOOL_COORDINATOR') {
+      return res.status(403).json({ error: 'Forbidden: Appointment access is restricted.' });
     }
 
     const appointments = await prisma.appointment.findMany({
@@ -131,11 +154,16 @@ router.get('/:id', authenticate, async (req, res) => {
             dob: true,
             diagnoses: true
           }
-        }
+        },
+        session: true
       }
     });
     if (!appt) {
       return res.status(404).json({ error: 'Appointment not found' });
+    }
+    const canAccess = await canAccessAppointment(req.user, appt);
+    if (!canAccess) {
+      return res.status(403).json({ error: 'Forbidden: Access restricted to assigned appointments.' });
     }
     res.json(appt);
   } catch (error) {
@@ -148,6 +176,10 @@ router.get('/:id', authenticate, async (req, res) => {
 router.post('/', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
   try {
     const { patientId, clinicianId, startTime, durationMinutes, type, status, isTelepractice } = req.body;
+    const canAccess = await canAccessPatient(req.user, patientId);
+    if (!canAccess) {
+      return res.status(403).json({ error: 'Forbidden: Cannot schedule this patient.' });
+    }
     
     let resolvedClinicianId = clinicianId;
     if (!resolvedClinicianId && req.user.role === 'SLP') {
@@ -157,21 +189,10 @@ router.post('/', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
       resolvedClinicianId = clinician?.id;
     }
 
-    const appt = await prisma.appointment.create({
-      data: {
-        patientId,
-        clinicianId: resolvedClinicianId,
-        startTime: new Date(startTime),
-        durationMinutes: parseInt(durationMinutes),
-        type,
-        status: status || 'SCHEDULED',
-        isTelepractice: !!isTelepractice,
-      }
-    });
-
     // Create a draft session if not an IEP screening
+    let createdSession = null;
     if (patientId) {
-      await prisma.session.create({
+      createdSession = await prisma.session.create({
         data: {
           patientId,
           clinicianId: resolvedClinicianId,
@@ -185,6 +206,19 @@ router.post('/', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
         }
       });
     }
+
+    const appt = await prisma.appointment.create({
+      data: {
+        patientId,
+        clinicianId: resolvedClinicianId,
+        startTime: new Date(startTime),
+        durationMinutes: parseInt(durationMinutes),
+        type,
+        status: status || 'SCHEDULED',
+        isTelepractice: !!isTelepractice,
+        sessionId: createdSession ? createdSession.id : null,
+      }
+    });
 
     // Log action
     await prisma.auditLog.create({
@@ -211,11 +245,42 @@ router.patch('/:id/status', authenticate, authorize('SLP', 'ADMIN'), async (req,
     const statusVal = typeof status === 'object' ? status?.status : status;
     const roomUrlVal = typeof status === 'object' ? status?.dailyRoomUrl : dailyRoomUrl;
 
+    const existingAppt = await prisma.appointment.findUnique({
+      where: { id: req.params.id }
+    });
+
+    if (!existingAppt) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+    const canAccess = await canAccessAppointment(req.user, existingAppt);
+    if (!canAccess) {
+      return res.status(403).json({ error: 'Forbidden: Cannot update this appointment.' });
+    }
+
+    let sessionId = existingAppt.sessionId;
+    if (statusVal === 'COMPLETED' && !sessionId) {
+      const session = await prisma.session.create({
+        data: {
+          patientId: existingAppt.patientId,
+          clinicianId: existingAppt.clinicianId,
+          dateOfService: existingAppt.startTime,
+          durationMinutes: existingAppt.durationMinutes,
+          cptCode: existingAppt.type === 'Evaluation' ? '92523' : '92507',
+          icd10Codes: [],
+          status: 'DRAFT',
+          telehealthSession: existingAppt.isTelepractice,
+          exercises: []
+        }
+      });
+      sessionId = session.id;
+    }
+
     const appt = await prisma.appointment.update({
       where: { id: req.params.id },
       data: {
         ...(statusVal ? { status: statusVal } : {}),
-        ...(roomUrlVal ? { dailyRoomUrl: roomUrlVal } : {})
+        ...(roomUrlVal ? { dailyRoomUrl: roomUrlVal } : {}),
+        ...(sessionId ? { sessionId } : {})
       }
     });
     res.json(appt);
@@ -232,11 +297,42 @@ router.put('/:id/status', authenticate, authorize('SLP', 'ADMIN'), async (req, r
     const statusVal = typeof status === 'object' ? status?.status : status;
     const roomUrlVal = typeof status === 'object' ? status?.dailyRoomUrl : dailyRoomUrl;
 
+    const existingAppt = await prisma.appointment.findUnique({
+      where: { id: req.params.id }
+    });
+
+    if (!existingAppt) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+    const canAccess = await canAccessAppointment(req.user, existingAppt);
+    if (!canAccess) {
+      return res.status(403).json({ error: 'Forbidden: Cannot update this appointment.' });
+    }
+
+    let sessionId = existingAppt.sessionId;
+    if (statusVal === 'COMPLETED' && !sessionId) {
+      const session = await prisma.session.create({
+        data: {
+          patientId: existingAppt.patientId,
+          clinicianId: existingAppt.clinicianId,
+          dateOfService: existingAppt.startTime,
+          durationMinutes: existingAppt.durationMinutes,
+          cptCode: existingAppt.type === 'Evaluation' ? '92523' : '92507',
+          icd10Codes: [],
+          status: 'DRAFT',
+          telehealthSession: existingAppt.isTelepractice,
+          exercises: []
+        }
+      });
+      sessionId = session.id;
+    }
+
     const appt = await prisma.appointment.update({
       where: { id: req.params.id },
       data: {
         ...(statusVal ? { status: statusVal } : {}),
-        ...(roomUrlVal ? { dailyRoomUrl: roomUrlVal } : {})
+        ...(roomUrlVal ? { dailyRoomUrl: roomUrlVal } : {}),
+        ...(sessionId ? { sessionId } : {})
       }
     });
     res.json(appt);

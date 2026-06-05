@@ -7,6 +7,9 @@ async function main() {
   console.log('Seeding database with real demo data...');
 
   // Clean up existing data to prevent duplicate unique key/relation errors
+  await prisma.payment.deleteMany();
+  await prisma.invoiceItem.deleteMany();
+  await prisma.invoice.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.message.deleteMany();
   await prisma.iepStudent.deleteMany();
@@ -444,6 +447,137 @@ async function main() {
     prisma.auditLog.upsert({ where: { id: 'AL003' }, update: {}, create: { id: 'AL003', userId: slpUser.id, action: 'SIGN_NOTE', resource: 'SESSION', resourceId: 'S001', details: { cptCode: '92507' }, createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } }),
     prisma.auditLog.upsert({ where: { id: 'AL004' }, update: {}, create: { id: 'AL004', userId: adminUser.id, action: 'VIEW_BILLING', resource: 'BILLING', resourceId: null, details: { filter: 'THIS_MONTH' }, createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000) } }),
   ]);
+
+  // ── INVOICES & PAYMENTS ──────────────────────────────────────────────────────
+  const fifteenDaysAgo = new Date(); fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+  const twelveDaysAgo = new Date(); twelveDaysAgo.setDate(twelveDaysAgo.getDate() - 12);
+  const oneDayAgo = new Date(); oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+  const fiveDaysAgo = new Date(); fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+  const fourDaysAgo = new Date(); fourDaysAgo.setDate(fourDaysAgo.getDate() - 4);
+  const nineDaysFromNow = new Date(); nineDaysFromNow.setDate(nineDaysFromNow.getDate() + 9);
+  const twentyDaysAgo = new Date(); twentyDaysAgo.setDate(twentyDaysAgo.getDate() - 20);
+  const sixDaysAgo = new Date(); sixDaysAgo.setDate(sixDaysAgo.getDate() - 6);
+  const twoDaysAgo = new Date(); twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+  const twelveDaysFromNow = new Date(); twelveDaysFromNow.setDate(twelveDaysFromNow.getDate() + 12);
+
+  // Invoice 1 (PAID)
+  const inv1 = await prisma.invoice.create({
+    data: {
+      id: 'I001',
+      patientId: 'P001',
+      invoiceNumber: 'SS-20260520-4829',
+      invoiceDate: fifteenDaysAgo,
+      dueDate: oneDayAgo,
+      subtotal: 6000,
+      taxAmount: 1080,
+      totalAmount: 7080,
+      paidAmount: 7080,
+      balanceAmount: 0,
+      status: 'PAID',
+      notes: 'Payment received via GPay. Thank you!',
+      createdBy: 'admin@speechsync.in'
+    }
+  });
+  await prisma.invoiceItem.createMany({
+    data: [
+      { invoiceId: 'I001', description: 'Speech Assessment', quantity: 1, rate: 3000, amount: 3000 },
+      { invoiceId: 'I001', description: 'Speech Therapy Session', quantity: 2, rate: 1500, amount: 3000 }
+    ]
+  });
+  await prisma.payment.create({
+    data: {
+      invoiceId: 'I001',
+      patientId: 'P001',
+      amount: 7080,
+      paymentMethod: 'UPI',
+      transactionId: 'UPI982347239',
+      paymentDate: twelveDaysAgo,
+      notes: 'GPay transfer confirmed'
+    }
+  });
+
+  // Invoice 2 (PARTIALLY_PAID)
+  const inv2 = await prisma.invoice.create({
+    data: {
+      id: 'I002',
+      patientId: 'P001',
+      invoiceNumber: 'SS-20260530-1092',
+      invoiceDate: fiveDaysAgo,
+      dueDate: nineDaysFromNow,
+      subtotal: 3000,
+      taxAmount: 540,
+      totalAmount: 3540,
+      paidAmount: 1500,
+      balanceAmount: 2040,
+      status: 'PARTIALLY_PAID',
+      notes: 'Initial cash payment. Balance due on completion.',
+      createdBy: 'admin@speechsync.in'
+    }
+  });
+  await prisma.invoiceItem.createMany({
+    data: [
+      { invoiceId: 'I002', description: 'Teletherapy Session', quantity: 2, rate: 1500, amount: 3000 }
+    ]
+  });
+  await prisma.payment.create({
+    data: {
+      invoiceId: 'I002',
+      patientId: 'P001',
+      amount: 1500,
+      paymentMethod: 'Cash',
+      transactionId: null,
+      paymentDate: fourDaysAgo,
+      notes: 'Paid at desk'
+    }
+  });
+
+  // Invoice 3 (OVERDUE)
+  const inv3 = await prisma.invoice.create({
+    data: {
+      id: 'I003',
+      patientId: 'P002',
+      invoiceNumber: 'SS-20260515-7731',
+      invoiceDate: twentyDaysAgo,
+      dueDate: sixDaysAgo,
+      subtotal: 4500,
+      taxAmount: 810,
+      totalAmount: 5310,
+      paidAmount: 0,
+      balanceAmount: 5310,
+      status: 'OVERDUE',
+      notes: 'Please pay within 7 days of service.',
+      createdBy: 'admin@speechsync.in'
+    }
+  });
+  await prisma.invoiceItem.createMany({
+    data: [
+      { invoiceId: 'I003', description: 'Speech Therapy Session', quantity: 3, rate: 1500, amount: 4500 }
+    ]
+  });
+
+  // Invoice 4 (PENDING)
+  const inv4 = await prisma.invoice.create({
+    data: {
+      id: 'I004',
+      patientId: 'P003',
+      invoiceNumber: 'SS-20260602-9912',
+      invoiceDate: twoDaysAgo,
+      dueDate: twelveDaysFromNow,
+      subtotal: 5000,
+      taxAmount: 900,
+      totalAmount: 5900,
+      paidAmount: 0,
+      balanceAmount: 5900,
+      status: 'PENDING',
+      notes: 'Evaluations billing schedule.',
+      createdBy: 'admin@speechsync.in'
+    }
+  });
+  await prisma.invoiceItem.createMany({
+    data: [
+      { invoiceId: 'I004', description: 'Comprehensive Language Evaluation', quantity: 1, rate: 5000, amount: 5000 }
+    ]
+  });
 
   console.log('✅ Database seeded successfully with full real demo data.');
 }

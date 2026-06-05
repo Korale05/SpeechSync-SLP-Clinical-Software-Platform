@@ -28,7 +28,12 @@ const useAuthStore = create((set) => ({
     }
   },
 
-  logout: () => {
+  logout: async () => {
+    try {
+      await api.auth.logout();
+    } catch (error) {
+      console.warn('Logout audit request failed:', error);
+    }
     localStorage.removeItem('speechsync_token');
     localStorage.removeItem('speechsync_user');
     set({ user: null, isAuthenticated: false });

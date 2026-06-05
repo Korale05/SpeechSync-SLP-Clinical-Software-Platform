@@ -1,3 +1,4 @@
+// client/src/components/Sidebar.jsx
 import React, { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import useAuthStore, { ROLES } from '../store/authStore'
@@ -28,7 +29,7 @@ const Sidebar = () => {
         { to: '/scheduling', icon: ClipboardList, label: 'Scheduling' },
         { to: '/assessments/new', icon: FileText, label: 'Assessments' },
         { to: '/sessions/new', icon: FileText, label: 'SOAP Notes' },
-        { to: '/teletherapy/demo-session', icon: Video, label: 'Teletherapy' },
+        { to: '/teletherapy', icon: Video, label: 'Teletherapy' },
       ]
       break
     case ROLES.ADMIN:
@@ -38,7 +39,7 @@ const Sidebar = () => {
         { to: '/admin/doctors', icon: Users, label: 'Doctors' },
         { to: '/admin/users', icon: Settings, label: 'User Management' },
         { to: '/scheduling', icon: ClipboardList, label: 'Scheduling' },
-        { to: '/billing', icon: CreditCard, label: 'Billing' },
+        { to: '/admin/billing', icon: CreditCard, label: 'Billing' },
         { to: '/iep', icon: GraduationCap, label: 'Reports' },
         { to: '/audit-logs', icon: Settings, label: 'Audit Logs' },
       ]

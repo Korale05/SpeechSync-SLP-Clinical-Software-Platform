@@ -121,6 +121,7 @@ router.get('/:id', authenticate, async (req, res) => {
     const patient = await prisma.patient.findUnique({
       where: { id },
       include: {
+        assignedSlp: true,
         sessions: {
           orderBy: { dateOfService: 'desc' },
         },
@@ -128,11 +129,24 @@ router.get('/:id', authenticate, async (req, res) => {
           orderBy: { dateAdministered: 'desc' },
         },
         goals: {
+          include: {
+            progressHistory: {
+              orderBy: { recordedAt: 'desc' }
+            }
+          },
           orderBy: { createdAt: 'desc' },
         },
         billingRecords: {
           orderBy: { dateOfService: 'desc' },
         },
+        invoices: {
+          include: {
+            payments: {
+              orderBy: { paymentDate: 'desc' }
+            }
+          },
+          orderBy: { invoiceDate: 'desc' }
+        }
       },
     });
 
@@ -357,6 +371,521 @@ router.delete('/:id', authenticate, authorize('SLP', 'ADMIN'), async (req, res) 
     res.json({ message: 'Patient archived successfully', patient });
   } catch (error) {
     console.error('Archive patient error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/timeline — Chronological timeline of patient events
+router.get('/:id/timeline', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const patient = await prisma.patient.findUnique({
+      where: { id },
+      include: {
+        sessions: { orderBy: { dateOfService: 'desc' } },
+        assessments: { orderBy: { dateAdministered: 'desc' } },
+        goals: {
+          include: {
+            progressHistory: { orderBy: { recordedAt: 'desc' } }
+          }
+        },
+        appointments: { orderBy: { startTime: 'desc' } },
+        invoices: {
+          include: {
+            payments: { orderBy: { paymentDate: 'desc' } }
+          },
+          orderBy: { invoiceDate: 'desc' }
+        },
+        documents: { orderBy: { createdAt: 'desc' } }
+      }
+    });
+
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden: Access restricted' });
+    }
+
+    const events = [];
+
+    // 1. Assessment Created / Administered
+    patient.assessments.forEach(a => {
+      events.push({
+        id: `assessment-${a.id}`,
+        date: new Date(a.dateAdministered),
+        type: 'assessment',
+        title: `Assessment Administered: ${a.testName}`,
+        description: `Standard Score: ${a.standardScore || 'N/A'} (${a.percentile || 0}th percentile)`,
+        details: `Severity: ${a.severityLabel || 'N/A'} | Raw Score: ${a.rawScore || 0}`,
+        status: a.severityLabel || 'COMPLETED'
+      });
+      events.push({
+        id: `assessment-created-${a.id}`,
+        date: new Date(a.createdAt),
+        type: 'assessment_created',
+        title: `Assessment Record Created: ${a.testName}`,
+        description: `Assessment metadata entered in database`,
+        details: `Type: ${a.testName}`,
+        status: 'CREATED'
+      });
+    });
+
+    // 2. SOAP Saved & Signed & Teletherapy Completed
+    patient.sessions.forEach(s => {
+      events.push({
+        id: `session-${s.id}`,
+        date: new Date(s.dateOfService),
+        type: s.status === 'DRAFT' ? 'soap_saved' : 'soap_signed',
+        title: s.status === 'DRAFT' ? 'SOAP Note Drafted' : 'SOAP Note Signed',
+        description: `CPT Code: ${s.cptCode} | Duration: ${s.durationMinutes} mins`,
+        details: `Clinician ID: ${s.clinicianId}`,
+        status: s.status
+      });
+
+      if (s.telehealthSession) {
+        events.push({
+          id: `telehealth-${s.id}`,
+          date: new Date(s.dateOfService),
+          type: 'teletherapy_completed',
+          title: 'Teletherapy Session Completed',
+          description: `Remote video session conducted`,
+          details: `Duration: ${s.durationMinutes} mins | CPT: ${s.cptCode}`,
+          status: 'COMPLETED'
+        });
+      }
+    });
+
+    // 3. Goal Updated
+    patient.goals.forEach(g => {
+      g.progressHistory.forEach(p => {
+        events.push({
+          id: `progress-${p.id}`,
+          date: new Date(p.recordedAt),
+          type: 'goal_updated',
+          title: `Goal Progress Logged: ${g.domain}`,
+          description: `Accuracy achieved: ${p.value}% (Target: ${g.target}%)`,
+          details: `Goal Text: ${g.goalText}`,
+          status: g.status
+        });
+      });
+    });
+
+    // 4. Appointment Scheduled / Completed
+    patient.appointments.forEach(appt => {
+      events.push({
+        id: `appt-created-${appt.id}`,
+        date: new Date(appt.createdAt),
+        type: 'appointment_created',
+        title: 'Appointment Scheduled',
+        description: `Scheduled for: ${new Date(appt.startTime).toLocaleString('en-IN')}`,
+        details: `Type: ${appt.type} | Duration: ${appt.durationMinutes} mins`,
+        status: 'SCHEDULED'
+      });
+
+      if (appt.status === 'COMPLETED') {
+        events.push({
+          id: `appt-completed-${appt.id}`,
+          date: new Date(appt.startTime),
+          type: 'appointment_completed',
+          title: 'Appointment Completed',
+          description: `Session marked complete on schedule`,
+          details: `Type: ${appt.type}`,
+          status: 'COMPLETED'
+        });
+      }
+    });
+
+    // 5. Invoice Created
+    patient.invoices.forEach(inv => {
+      events.push({
+        id: `invoice-${inv.id}`,
+        date: new Date(inv.invoiceDate),
+        type: 'invoice_created',
+        title: `Invoice Created: ${inv.invoiceNumber}`,
+        description: `Billed Amount: ₹${inv.totalAmount.toLocaleString('en-IN')}`,
+        details: `Due Date: ${new Date(inv.dueDate).toLocaleDateString('en-IN')}`,
+        status: inv.status
+      });
+
+      // 6. Payment Received / Refunded
+      inv.payments.forEach(p => {
+        const isRefund = p.amount < 0;
+        events.push({
+          id: `payment-${p.id}`,
+          date: new Date(p.paymentDate),
+          type: isRefund ? 'billing_refund' : 'payment_received',
+          title: isRefund ? 'Refund Processed' : 'Payment Received',
+          description: isRefund 
+            ? `Amount: ₹${Math.abs(p.amount).toLocaleString('en-IN')} (Refunded)`
+            : `Amount: ₹${p.amount.toLocaleString('en-IN')} via ${p.paymentMethod}`,
+          details: `Invoice Ref: ${inv.invoiceNumber}${p.transactionId ? ` | Txn: ${p.transactionId}` : ''}`,
+          status: isRefund ? 'REFUNDED' : 'PAID'
+        });
+      });
+    });
+
+    // 7. Document Uploaded
+    patient.documents.forEach(doc => {
+      events.push({
+        id: `doc-${doc.id}`,
+        date: new Date(doc.createdAt),
+        type: 'document_uploaded',
+        title: `Document Uploaded: ${doc.fileName}`,
+        description: `Category: ${doc.documentType}`,
+        details: `Uploaded by: ${doc.uploadedBy}`,
+        status: 'UPLOADED'
+      });
+    });
+
+    // Sort timeline events chronologically descending (newest first)
+    events.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+    res.json(events);
+  } catch (error) {
+    console.error('Fetch timeline error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/assessments
+router.get('/:id/assessments', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const patient = await prisma.patient.findUnique({ where: { id } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden: Access restricted' });
+    }
+
+    const assessments = await prisma.assessment.findMany({
+      where: { patientId: id },
+      orderBy: { dateAdministered: 'desc' }
+    });
+    res.json(assessments);
+  } catch (error) {
+    console.error('Fetch assessments error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/goals
+router.get('/:id/goals', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const patient = await prisma.patient.findUnique({ where: { id } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden: Access restricted' });
+    }
+
+    const goals = await prisma.goal.findMany({
+      where: { patientId: id },
+      include: {
+        progressHistory: { orderBy: { recordedAt: 'desc' } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(goals);
+  } catch (error) {
+    console.error('Fetch goals error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/sessions
+router.get('/:id/sessions', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const patient = await prisma.patient.findUnique({ where: { id } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden: Access restricted' });
+    }
+
+    const sessions = await prisma.session.findMany({
+      where: { patientId: id },
+      orderBy: { dateOfService: 'desc' }
+    });
+    res.json(sessions);
+  } catch (error) {
+    console.error('Fetch sessions error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/billing
+router.get('/:id/billing', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const patient = await prisma.patient.findUnique({ where: { id } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden: Access restricted' });
+    }
+
+    const invoices = await prisma.invoice.findMany({
+      where: { patientId: id },
+      include: { payments: { orderBy: { paymentDate: 'desc' } } },
+      orderBy: { invoiceDate: 'desc' }
+    });
+
+    const payments = await prisma.payment.findMany({
+      where: { patientId: id },
+      orderBy: { paymentDate: 'desc' }
+    });
+
+    const outstandingBalance = invoices
+      .filter(inv => inv.status !== 'CANCELLED')
+      .reduce((sum, inv) => sum + inv.balanceAmount, 0);
+
+    res.json({
+      invoices,
+      payments,
+      outstandingBalance
+    });
+  } catch (error) {
+    console.error('Fetch billing error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/documents
+router.get('/:id/documents', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const patient = await prisma.patient.findUnique({ where: { id } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden: Access restricted' });
+    }
+
+    const documents = await prisma.document.findMany({
+      where: { patientId: id },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(documents);
+  } catch (error) {
+    console.error('Fetch documents error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/soap-notes
+router.get('/:id/soap-notes', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const patient = await prisma.patient.findUnique({ where: { id } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden: Access restricted' });
+    }
+
+    const sessions = await prisma.session.findMany({
+      where: { 
+        patientId: id,
+        soapNote: { not: null }
+      },
+      orderBy: { dateOfService: 'desc' },
+      include: {
+        patient: true
+      }
+    });
+    res.json(sessions);
+  } catch (error) {
+    console.error('Fetch soap notes error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/patients/:id/soap-notes
+router.post('/:id/soap-notes', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
+  const { id } = req.params;
+  const { dateOfService, durationMinutes, cptCode, icd10Codes, telehealthSession, subjective, objective, assessment, plan, status } = req.body;
+
+  try {
+    const patient = await prisma.patient.findUnique({ where: { id } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const clinician = await prisma.clinician.findUnique({
+      where: { userId: req.user.id },
+    });
+
+    if (!clinician) {
+      return res.status(403).json({ error: 'Only clinicians can create sessions/soap notes' });
+    }
+
+    const session = await prisma.session.create({
+      data: {
+        patientId: id,
+        clinicianId: clinician.id,
+        dateOfService: dateOfService ? new Date(dateOfService) : new Date(),
+        durationMinutes: parseInt(durationMinutes) || 45,
+        cptCode: cptCode || '92507',
+        icd10Codes: icd10Codes || [],
+        telehealthSession: telehealthSession || false,
+        soapNote: { subjective, objective, assessment, plan },
+        status: status || 'DRAFT',
+      },
+      include: { patient: true }
+    });
+
+    // Audit Log
+    await prisma.auditLog.create({
+      data: {
+        userId: req.user.id,
+        action: 'CREATE_SOAP_NOTE',
+        resource: 'SESSION',
+        resourceId: session.id,
+        details: { patientId: id }
+      }
+    });
+
+    res.status(201).json(session);
+  } catch (error) {
+    console.error('Create soap note error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/progress
+router.get('/:id/progress', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const patient = await prisma.patient.findUnique({ where: { id } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
+      return res.status(403).json({ error: 'Forbidden: Access restricted' });
+    }
+
+    const assessments = await prisma.assessment.findMany({
+      where: { patientId: id },
+      orderBy: { dateAdministered: 'asc' }
+    });
+
+    const sessions = await prisma.session.findMany({
+      where: { patientId: id },
+      orderBy: { dateOfService: 'asc' }
+    });
+
+    // Formatting progress data
+    const assessmentScores = assessments.map(a => ({
+      date: new Date(a.dateAdministered).toLocaleDateString('en-IN'),
+      score: a.standardScore || a.rawScore || 0,
+      testName: a.testName
+    }));
+
+    const sessionAttendance = sessions.map(s => ({
+      date: new Date(s.dateOfService).toLocaleDateString('en-IN'),
+      attended: s.status === 'COMPLETED' || s.status === 'SIGNED' || s.status === 'LOCKED' ? 1 : 0
+    }));
+
+    res.json({
+      assessmentScores,
+      sessionAttendance,
+      totalSessions: sessions.length,
+      completedSessions: sessions.filter(s => s.status === 'COMPLETED' || s.status === 'SIGNED' || s.status === 'LOCKED').length,
+      assessmentsCompleted: assessments.length,
+      lastAssessmentDate: assessments.length > 0 ? new Date(assessments[assessments.length - 1].dateAdministered).toLocaleDateString('en-IN') : null
+    });
+  } catch (error) {
+    console.error('Fetch progress error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/assessments
+router.get('/:id/assessments', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const assessments = await prisma.assessment.findMany({
+      where: { patientId: id },
+      orderBy: { dateAdministered: 'desc' }
+    });
+    res.json(assessments);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/goals
+router.get('/:id/goals', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const goals = await prisma.goal.findMany({
+      where: { patientId: id },
+      include: { progressHistory: { orderBy: { recordedAt: 'desc' } } },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(goals);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/sessions
+router.get('/:id/sessions', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const sessions = await prisma.session.findMany({
+      where: { patientId: id },
+      orderBy: { dateOfService: 'desc' }
+    });
+    res.json(sessions);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/billing
+router.get('/:id/billing', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const invoices = await prisma.invoice.findMany({
+      where: { patientId: id },
+      include: { payments: { orderBy: { paymentDate: 'desc' } } },
+      orderBy: { invoiceDate: 'desc' }
+    });
+    const payments = await prisma.payment.findMany({
+      where: { patientId: id },
+      orderBy: { paymentDate: 'desc' }
+    });
+    const outstandingBalance = invoices.filter(inv => inv.status !== 'CANCELLED').reduce((sum, inv) => sum + inv.balanceAmount, 0);
+    res.json({ invoices, payments, outstandingBalance });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/documents
+router.get('/:id/documents', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const documents = await prisma.document.findMany({
+      where: { patientId: id },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(documents);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/patients/:id/timeline
+router.get('/:id/timeline', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const sessions = await prisma.session.findMany({ where: { patientId: id } });
+    const assessments = await prisma.assessment.findMany({ where: { patientId: id } });
+    
+    let events = [];
+    sessions.forEach(s => events.push({ type: 'session', date: s.dateOfService, title: 'Session', description: s.cptCode, data: s }));
+    assessments.forEach(a => events.push({ type: 'assessment', date: a.dateAdministered, title: 'Assessment', description: a.testName, data: a }));
+    
+    events.sort((a, b) => new Date(b.date) - new Date(a.date));
+    res.json(events);
+  } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });

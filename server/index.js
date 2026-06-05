@@ -18,6 +18,8 @@ import reportRoutes from './routes/reports.js';
 import teletherapyRoutes from './routes/teletherapy.js';
 import iepRoutes from './routes/iep.js';
 import userRoutes from './routes/users.js';
+import invoiceRoutes from './routes/invoices.js';
+import documentRoutes from './routes/documents.js';
 
 dotenv.config();
 
@@ -36,7 +38,8 @@ const PORT = process.env.PORT || 5000;
 
 // Enable CORS
 app.use(cors({
-  origin: process.env.CLIENT_ORIGIN || '*',
+  origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
@@ -89,6 +92,7 @@ app.get('/', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/sessions', sessionRoutes);
+app.use('/api/soap-notes', sessionRoutes);
 app.use('/api/assessments', assessmentRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/ai', aiRoutes);
@@ -101,6 +105,8 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/teletherapy', teletherapyRoutes);
 app.use('/api/iep', iepRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/documents', documentRoutes);
+app.use('/api', invoiceRoutes);
 
 // Global Error Handler
 app.use((err, req, res, next) => {

@@ -8,13 +8,15 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { Plus, Target, TrendingUp, FileText } from 'lucide-react'
+import useAuthStore from '../store/authStore'
 import { toast } from 'react-hot-toast'
 import LoadingScreen from '../components/LoadingScreen'
 
 const Goals = () => {
   const [searchParams] = useSearchParams()
   const queryClient = useQueryClient()
-  
+  const { user } = useAuthStore()
+
   const queryPatientId = searchParams.get('patientId')
   const [selectedPatientId, setSelectedPatientId] = useState(queryPatientId || '')
   const [isFormOpen, setIsFormOpen] = useState(false)
@@ -27,6 +29,12 @@ const Goals = () => {
   const [target, setTarget] = useState('80')
   const [cpt, setCpt] = useState('92507')
   const [icd, setIcd] = useState('F80.0')
+
+  // Auth rules: Parents & School Coordinators have read-only access
+  const isReadOnly = user?.role === 'PARENT' || user?.role === 'SCHOOL_COORDINATOR'
+
+  // Trajectory interactive click state
+  const [selectedPointSession, setSelectedPointSession] = useState(null)
 
   // Fetch Patients caseload
   const { data: patients = [], isLoading: isPatientsLoading } = useQuery({
@@ -71,8 +79,9 @@ const Goals = () => {
   const progressData = [
     { date: 'Baseline', accuracy: activeGoal?.baseline || 0 },
     ...progressHistory.map(p => ({
-      date: new Date(p.recordedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      accuracy: p.value
+      date: new Date(p.recordedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }),
+      accuracy: p.value,
+      recordedAt: p.recordedAt
     }))
   ]
 
@@ -121,6 +130,41 @@ const Goals = () => {
     })
   }
 
+  const handleChartPointClick = (point) => {
+    if (point.date === 'Baseline') {
+      setSelectedPointSession({
+        isBaseline: true,
+        title: 'Baseline Accuracy',
+        notes: 'Initial clinical assessment baseline accuracy level set upon goal creation.'
+      })
+      return
+    }
+    
+    const sessionDate = point.recordedAt ? new Date(point.recordedAt).toDateString() : ''
+    const matchingSession = selectedPatient?.sessions?.find(s => 
+      new Date(s.dateOfService).toDateString() === sessionDate
+    )
+
+    if (matchingSession) {
+      setSelectedPointSession({
+        isBaseline: false,
+        date: new Date(matchingSession.dateOfService).toLocaleDateString('en-IN'),
+        cptCode: matchingSession.cptCode,
+        soapNote: matchingSession.soapNote,
+        durationMinutes: matchingSession.durationMinutes
+      })
+    } else {
+      setSelectedPointSession({
+        isBaseline: false,
+        date: point.date,
+        soapNote: {
+          subjective: 'Progress logged directly via clinical dashboard.',
+          objective: `Accuracy score recorded at ${point.accuracy}%.`
+        }
+      })
+    }
+  }
+
   if (isPatientsLoading || isGoalsLoading) return <LoadingScreen />
 
   if (!selectedPatient) {
@@ -147,15 +191,18 @@ const Goals = () => {
             onChange={(e) => {
               setSelectedPatientId(e.target.value)
               setActiveGoalId('')
+              setSelectedPointSession(null)
             }}
           >
             {patients.map(p => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
-          <Button onClick={() => setIsFormOpen(!isFormOpen)} className="shadow-sm">
-            <Plus className="mr-2 h-4 w-4" /> Add New Goal
-          </Button>
+          {!isReadOnly && (
+            <Button onClick={() => setIsFormOpen(!isFormOpen)} className="shadow-sm">
+              <Plus className="mr-2 h-4 w-4" /> Add New Goal
+            </Button>
+          )}
         </div>
       </div>
 
@@ -264,30 +311,88 @@ const Goals = () => {
           <CardContent className="pt-6 grid grid-cols-1 md:grid-cols-4 gap-6">
             
             {/* Trajectory Chart */}
-            <div className="md:col-span-3 h-80">
-              <h4 className="font-semibold text-sm text-slate-500 mb-4 flex items-center gap-2">
-                <TrendingUp className="h-4 w-4" /> Accuracy Trajectory
-              </h4>
-              {isProgressLoading ? (
-                <div className="h-full flex items-center justify-center text-slate-400">Loading progress...</div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={progressData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                    <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} dy={10} />
-                    <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} dx={-10} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <ReferenceLine y={activeGoal.target} stroke="#10B981" strokeDasharray="5 5" label={{ position: 'top', value: `Target ${activeGoal.target}%`, fill: '#10B981', fontSize: 12, fontWeight: 600 }} />
-                    <Line 
-                      type="monotone" 
-                      dataKey="accuracy" 
-                      stroke="#2563EB" 
-                      strokeWidth={3}
-                      activeDot={{ r: 8, fill: '#2563EB', stroke: '#white', strokeWidth: 2 }}
-                      dot={{ r: 5, fill: '#2563EB', strokeWidth: 0 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+            <div className="md:col-span-3 space-y-6">
+              <div className="h-80">
+                <h4 className="font-semibold text-sm text-slate-500 mb-4 flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4" /> Accuracy Trajectory (Click a point to view session details)
+                </h4>
+                {isProgressLoading ? (
+                  <div className="h-full flex items-center justify-center text-slate-400">Loading progress...</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart 
+                      data={progressData} 
+                      margin={{ top: 5, right: 20, bottom: 5, left: 0 }}
+                      onClick={(e) => {
+                        if (e && e.activePayload && e.activePayload.length > 0) {
+                          handleChartPointClick(e.activePayload[0].payload)
+                        }
+                      }}
+                      className="cursor-pointer"
+                    >
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} dy={10} />
+                      <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} dx={-10} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <ReferenceLine y={activeGoal.target} stroke="#10B981" strokeDasharray="5 5" label={{ position: 'top', value: `Target ${activeGoal.target}%`, fill: '#10B981', fontSize: 12, fontWeight: 600 }} />
+                      <Line 
+                        type="monotone" 
+                        dataKey="accuracy" 
+                        stroke="#2563EB" 
+                        strokeWidth={3}
+                        activeDot={{ r: 8, fill: '#2563EB', stroke: 'white', strokeWidth: 2 }}
+                        dot={{ r: 5, fill: '#2563EB', strokeWidth: 0 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              {/* SOAP Snippet Box */}
+              {selectedPointSession && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mt-6 animate-in fade-in duration-300">
+                  <div className="flex justify-between items-center border-b border-slate-200 pb-2 mb-3">
+                    <h5 className="font-semibold text-sm text-slate-800 flex items-center gap-2">
+                      <FileText className="h-4.5 w-4.5 text-primary" /> 
+                      {selectedPointSession.isBaseline ? selectedPointSession.title : `Session Details - ${selectedPointSession.date}`}
+                    </h5>
+                    {!selectedPointSession.isBaseline && selectedPointSession.durationMinutes && (
+                      <span className="text-xs text-slate-500 font-medium">
+                        Duration: {selectedPointSession.durationMinutes} mins {selectedPointSession.cptCode && `| CPT: ${selectedPointSession.cptCode}`}
+                      </span>
+                    )}
+                  </div>
+                  {selectedPointSession.isBaseline ? (
+                    <p className="text-sm text-slate-600 italic leading-relaxed">{selectedPointSession.notes}</p>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                      {selectedPointSession.soapNote?.subjective && (
+                        <div>
+                          <strong className="text-slate-700 block mb-1 uppercase tracking-wider text-[10px]">Subjective (S)</strong>
+                          <p className="text-slate-600 bg-white p-2 rounded border border-slate-200 leading-relaxed font-sans min-h-[50px] shadow-2xs">{selectedPointSession.soapNote.subjective}</p>
+                        </div>
+                      )}
+                      {selectedPointSession.soapNote?.objective && (
+                        <div>
+                          <strong className="text-slate-700 block mb-1 uppercase tracking-wider text-[10px]">Objective (O)</strong>
+                          <p className="text-slate-600 bg-white p-2 rounded border border-slate-200 leading-relaxed font-sans min-h-[50px] shadow-2xs">{selectedPointSession.soapNote.objective}</p>
+                        </div>
+                      )}
+                      {selectedPointSession.soapNote?.assessment && (
+                        <div>
+                          <strong className="text-slate-700 block mb-1 uppercase tracking-wider text-[10px]">Assessment (A)</strong>
+                          <p className="text-slate-600 bg-white p-2 rounded border border-slate-200 leading-relaxed font-sans min-h-[50px] shadow-2xs">{selectedPointSession.soapNote.assessment}</p>
+                        </div>
+                      )}
+                      {selectedPointSession.soapNote?.plan && (
+                        <div>
+                          <strong className="text-slate-700 block mb-1 uppercase tracking-wider text-[10px]">Plan (P)</strong>
+                          <p className="text-slate-600 bg-white p-2 rounded border border-slate-200 leading-relaxed font-sans min-h-[50px] shadow-2xs">{selectedPointSession.soapNote.plan}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             

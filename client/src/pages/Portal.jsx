@@ -1,10 +1,10 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
-import { Calendar, MessageCircle, PlayCircle, Download, CheckCircle2 } from 'lucide-react'
+import { Calendar, MessageCircle, PlayCircle, Download, CheckCircle2, Send, X } from 'lucide-react'
 import useAuthStore from '../store/authStore'
 import { api } from '../services/api'
 import { toast } from 'react-hot-toast'
@@ -13,6 +13,11 @@ import LoadingScreen from '../components/LoadingScreen'
 const Portal = () => {
   const { user } = useAuthStore()
   const queryClient = useQueryClient()
+
+  // Chat window state
+  const [isChatOpen, setIsChatOpen] = useState(false)
+  const [newMessageText, setNewMessageText] = useState('')
+  const chatEndRef = React.useRef(null)
 
   // Fetch Patients caseload (parent gets only their children)
   const { data: patients = [], isLoading: isPatientsLoading } = useQuery({
@@ -48,6 +53,37 @@ const Portal = () => {
     }
   })
 
+  // Fetch messages
+  const { data: messages = [] } = useQuery({
+    queryKey: ['messages'],
+    queryFn: () => api.get('/messages').then(res => res.data),
+    enabled: !!user?.id && isChatOpen,
+    refetchInterval: 5000
+  })
+
+  // Send message mutation
+  const sendMessageMutation = useMutation({
+    mutationFn: (bodyText) => api.messages.sendMessage({
+      body: bodyText,
+      subject: `Message from Parent (${user?.name})`,
+      patientId: child?.id
+    }),
+    onSuccess: () => {
+      setNewMessageText('')
+      queryClient.invalidateQueries({ queryKey: ['messages'] })
+    },
+    onError: (err) => {
+      toast.error('Failed to send message: ' + err.message)
+    }
+  })
+
+  // Scroll to bottom on message updates
+  React.useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages, isChatOpen])
+
   if (isPatientsLoading || isGoalsLoading || isExercisesLoading) return <LoadingScreen />
 
   if (!child) {
@@ -82,7 +118,11 @@ const Portal = () => {
               <h1 className="font-heading text-3xl font-bold text-slate-900">Welcome, {user?.name?.split(' ')[0] || 'Parent'}!</h1>
               <p className="text-slate-600 mt-2 text-lg">Here's the latest on {child.name}'s speech therapy journey.</p>
             </div>
-            <Button size="lg" className="rounded-full shadow-sm bg-primary hover:bg-primary/90 text-white font-semibold px-6">
+            <Button 
+              onClick={() => setIsChatOpen(true)}
+              size="lg" 
+              className="rounded-full shadow-sm bg-primary hover:bg-primary/90 text-white font-semibold px-6"
+            >
               <MessageCircle className="mr-2 h-5 w-5" /> Message Therapist
             </Button>
           </div>
@@ -102,13 +142,39 @@ const Portal = () => {
               <CardContent className="p-6">
                 <div className="text-center">
                   <p className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Upcoming Appointment</p>
-                  <p className="text-3xl font-bold font-heading text-slate-900 mb-6">Scheduled</p>
-                  <Button 
-                    onClick={() => window.open(child.telepracticeUrl || 'https://daily.co', '_blank')}
-                    className="w-full rounded-xl h-12 text-base font-semibold shadow-sm bg-primary hover:bg-primary/95 text-white"
-                  >
-                    🎥 Join Teletherapy
-                  </Button>
+                  {child?.appointments && child.appointments.length > 0 ? (
+                    <>
+                      <p className="text-sm font-bold text-slate-800 mb-1">
+                        {new Date(child.appointments[0].startTime).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })}
+                      </p>
+                      <p className="text-2xl font-bold font-heading text-slate-900 mb-6">
+                        {new Date(child.appointments[0].startTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                      <Button 
+                        onClick={() => {
+                          const apptUrl = child.appointments[0].dailyRoomUrl;
+                          if (apptUrl) {
+                            window.open(apptUrl, '_blank');
+                          } else {
+                            toast.error('The therapist has not opened the teletherapy room yet. Please refresh shortly.');
+                          }
+                        }}
+                        className="w-full rounded-xl h-12 text-base font-semibold shadow-sm bg-primary hover:bg-primary/95 text-white"
+                      >
+                        🎥 Join Teletherapy Room
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-3xl font-bold font-heading text-slate-900 mb-6">Not Scheduled</p>
+                      <Button 
+                        disabled
+                        className="w-full rounded-xl h-12 text-base font-semibold shadow-sm bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                      >
+                        No Active Room
+                      </Button>
+                    </>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -136,16 +202,20 @@ const Portal = () => {
                 <p className="text-center text-sm text-slate-600 mt-2 font-medium">
                   {child.name} is making great progress on goals!
                 </p>
-                <a 
-                  href={api.reports.getDownloadUrl(child.id)} 
-                  target="_blank" 
-                  rel="noreferrer"
-                  className="w-full"
+                <Button
+                  variant="outline"
+                  className="w-full mt-4 rounded-xl text-primary border-primary/20 hover:bg-primary/5"
+                  onClick={async () => {
+                    try {
+                      await api.downloadSecureFile(`/reports/iep/${child.id}`, `${child.name}-Progress-Report.pdf`)
+                      toast.success('Progress Report downloaded successfully')
+                    } catch (err) {
+                      toast.error('Failed to download progress report: ' + err.message)
+                    }
+                  }}
                 >
-                  <Button variant="outline" className="w-full mt-4 rounded-xl text-primary border-primary/20 hover:bg-primary/5">
-                    <Download className="mr-2 h-4 w-4" /> Download Progress Report
-                  </Button>
-                </a>
+                  <Download className="mr-2 h-4 w-4" /> Download Progress Report
+                </Button>
               </CardContent>
             </Card>
 
@@ -219,6 +289,87 @@ const Portal = () => {
 
         </div>
       </div>
+
+      {/* Slide-over Chat Panel */}
+      {isChatOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col transform animate-in slide-in-from-right duration-250">
+            {/* Chat Header */}
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+                  SLP
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm">Therapist Chat</h3>
+                  <p className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block"></span> Secure Clinical Line
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsChatOpen(false)}
+                className="text-slate-400 hover:text-slate-600 transition-colors p-1.5 rounded-full hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Message Thread */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
+              {messages.length > 0 ? (
+                [...messages].reverse().map((msg) => {
+                  const isMe = msg.fromUserId === user.id;
+                  return (
+                    <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[75%] rounded-2xl p-3 text-xs leading-relaxed ${
+                        isMe 
+                          ? 'bg-primary text-white rounded-tr-none shadow-sm' 
+                          : 'bg-white text-slate-800 rounded-tl-none border border-slate-200/80 shadow-2xs'
+                      }`}>
+                        <p>{msg.body}</p>
+                        <span className={`text-[8px] block mt-1.5 text-right ${isMe ? 'text-white/70' : 'text-slate-400'}`}>
+                          {new Date(msg.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-slate-400 text-center p-8">
+                  <MessageCircle className="h-10 w-10 text-slate-300 mb-2" />
+                  <p className="text-xs font-semibold">No messages yet</p>
+                  <p className="text-[10px] text-slate-400/80 mt-0.5">Send a message to start communicating with your therapist.</p>
+                </div>
+              )}
+              <div ref={chatEndRef} />
+            </div>
+
+            {/* Input Bar */}
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              if (!newMessageText.trim()) return;
+              sendMessageMutation.mutate(newMessageText.trim());
+            }} className="p-3 border-t border-slate-100 flex gap-2 bg-white">
+              <input 
+                type="text"
+                value={newMessageText}
+                onChange={e => setNewMessageText(e.target.value)}
+                placeholder="Type a message to the therapist..."
+                className="flex-1 h-9 rounded-lg border border-slate-200 bg-slate-50/50 px-3 text-xs focus:outline-hidden focus:ring-1 focus:ring-primary focus:bg-white transition-all"
+              />
+              <Button 
+                type="submit"
+                disabled={sendMessageMutation.isPending || !newMessageText.trim()}
+                className="h-9 w-9 rounded-lg bg-primary hover:bg-primary/95 text-white flex items-center justify-center p-0 flex-shrink-0"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

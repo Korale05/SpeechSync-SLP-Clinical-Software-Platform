@@ -41,15 +41,30 @@ router.get('/alerts', authenticate, authorize('SLP', 'ADMIN'), async (req, res) 
   }
 });
 
+// Get billing records for a specific patient
+router.get('/patient/:patientId', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
+  const { patientId } = req.params;
+  try {
+    const billing = await prisma.billingRecord.findMany({
+      where: { patientId },
+      orderBy: { dateOfService: 'desc' },
+    });
+    res.json(billing);
+  } catch (error) {
+    console.error('Fetch patient billing error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Create billing record
-router.post('/', authenticate, authorize('ADMIN'), async (req, res) => {
-  const { patientId, sessionId, dateOfService, cptCodes, icd10Codes, billedAmount, status, modifiers } = req.body;
+router.post('/', authenticate, authorize('ADMIN', 'SLP'), async (req, res) => {
+  const { patientId, sessionId, dateOfService, cptCodes, icd10Codes, billedAmount, status, modifiers, notes } = req.body;
 
   try {
     const billingRecord = await prisma.billingRecord.create({
       data: {
         patientId,
-        sessionId,
+        sessionId: sessionId || null,
         dateOfService: dateOfService ? new Date(dateOfService) : new Date(),
         cptCodes: cptCodes || [],
         icd10Codes: icd10Codes || [],
@@ -57,6 +72,7 @@ router.post('/', authenticate, authorize('ADMIN'), async (req, res) => {
         paidAmount: null,
         status: status || 'PENDING',
         modifiers: modifiers || [],
+        notes: notes || null,
       },
     });
 
@@ -68,9 +84,9 @@ router.post('/', authenticate, authorize('ADMIN'), async (req, res) => {
 });
 
 // Update billing record (adjust status, record payment)
-router.put('/:id', authenticate, authorize('ADMIN'), async (req, res) => {
+router.put('/:id', authenticate, authorize('ADMIN', 'SLP'), async (req, res) => {
   const { id } = req.params;
-  const { status, paidAmount, modifiers, billedAmount } = req.body;
+  const { status, paidAmount, modifiers, billedAmount, notes, paymentDetails } = req.body;
 
   try {
     const record = await prisma.billingRecord.findUnique({ where: { id } });
@@ -80,9 +96,11 @@ router.put('/:id', authenticate, authorize('ADMIN'), async (req, res) => {
 
     const data = {};
     if (status) data.status = status;
-    if (paidAmount !== undefined) data.paidAmount = parseFloat(paidAmount);
+    if (paidAmount !== undefined) data.paidAmount = paidAmount !== null ? parseFloat(paidAmount) : null;
     if (modifiers) data.modifiers = modifiers;
     if (billedAmount !== undefined) data.billedAmount = parseFloat(billedAmount);
+    if (notes !== undefined) data.notes = notes;
+    if (paymentDetails !== undefined) data.paymentDetails = paymentDetails;
 
     const updated = await prisma.billingRecord.update({
       where: { id },
@@ -92,6 +110,23 @@ router.put('/:id', authenticate, authorize('ADMIN'), async (req, res) => {
     res.json(updated);
   } catch (error) {
     console.error('Update billing error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete billing record
+router.delete('/:id', authenticate, authorize('ADMIN', 'SLP'), async (req, res) => {
+  const { id } = req.params;
+  try {
+    const record = await prisma.billingRecord.findUnique({ where: { id } });
+    if (!record) {
+      return res.status(404).json({ error: 'Billing record not found' });
+    }
+
+    await prisma.billingRecord.delete({ where: { id } });
+    res.json({ message: 'Billing record deleted successfully' });
+  } catch (error) {
+    console.error('Delete billing error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -148,10 +183,17 @@ router.post('/scrub', authenticate, authorize('ADMIN', 'SLP'), async (req, res) 
       suggestions.push('GN');
     }
 
+    const passed = issues.filter(i => i.severity === 'ERROR').length === 0;
+    
     res.json({
+      // AddBillModal contract
+      passed,
       issues,
       suggestedModifiers: [...new Set([...modifiers, ...suggestions])],
-      passed: issues.filter(i => i.severity === 'ERROR').length === 0
+      // Billing.jsx contract
+      clean: passed,
+      flags: issues.map(i => i.message),
+      suggestions: suggestions
     });
   } catch (error) {
     console.error('Claim scrubbing error:', error);

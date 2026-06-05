@@ -11,6 +11,42 @@ import { streamSOAPNote } from '../services/aiScribe'
 import { toast } from 'react-hot-toast'
 import LoadingScreen from '../components/LoadingScreen'
 
+const icd10Options = [
+  { code: 'F80.0', desc: 'Phonological disorder' },
+  { code: 'F80.1', desc: 'Expressive language disorder' },
+  { code: 'F80.2', desc: 'Mixed receptive-expressive language disorder' },
+  { code: 'F80.4', desc: 'Speech development delay due to hearing loss' },
+  { code: 'F80.81', desc: 'Childhood onset fluency disorder (Stuttering)' },
+  { code: 'F80.89', desc: 'Other developmental disorders of speech and language' },
+  { code: 'R47.01', desc: 'Aphasia' },
+  { code: 'R47.1', desc: 'Dysarthria and anarthria' },
+  { code: 'R48.2', desc: 'Apraxia' },
+  { code: 'R13.10', desc: 'Dysphagia, unspecified' }
+]
+
+const presets = {
+  subjective: [
+    "Client cooperative and highly engaged.",
+    "Parent reports consistent practice at home.",
+    "Client appeared fatigued and easily distracted."
+  ],
+  objective: [
+    "Produced targets with 80% accuracy.",
+    "Completed comprehension task with minimal cues.",
+    "Fluency rate measured at 90% in sentences."
+  ],
+  assessment: [
+    "Shows steady progress towards goals.",
+    "Receptive language stable; expressive improving.",
+    "Attention limited; benefited from tactile prompts."
+  ],
+  plan: [
+    "Continue therapy twice weekly targeting phonemes.",
+    "Assign home practice for parent coaching.",
+    "Introduce conversational level tasks next."
+  ]
+}
+
 const SOAPNote = () => {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -29,6 +65,19 @@ const SOAPNote = () => {
     assessment: '',
     plan: ''
   })
+
+  // ICD-10 Search Component states
+  const [selectedIcd10, setSelectedIcd10] = useState('F80.2')
+  const [icdSearch, setIcdSearch] = useState('F80.2')
+  const [icdDropdownOpen, setIcdDropdownOpen] = useState(false)
+
+  // HEP Modal state
+  const [hepModalOpen, setHepModalOpen] = useState(false)
+  const [hepName, setHepName] = useState('R-phoneme Initial Practice')
+  const [hepDescription, setHepDescription] = useState('')
+  const [hepFrequency, setHepFrequency] = useState('Once daily')
+  const [hepDueDate, setHepDueDate] = useState('')
+  const [isAssigningHep, setIsAssigningHep] = useState(false)
 
   // Fetch Patients caseload
   const { data: patients = [], isLoading: isPatientsLoading } = useQuery({
@@ -56,20 +105,31 @@ const SOAPNote = () => {
 
   // Load existing draft if present
   useEffect(() => {
-    if (currentDraftSession && currentDraftSession.soapNote) {
-      setSoapData({
-        subjective: currentDraftSession.soapNote.subjective || '',
-        objective: currentDraftSession.soapNote.objective || '',
-        assessment: currentDraftSession.soapNote.assessment || '',
-        plan: currentDraftSession.soapNote.plan || ''
-      })
+    if (currentDraftSession) {
+      if (currentDraftSession.soapNote) {
+        setSoapData({
+          subjective: currentDraftSession.soapNote.subjective || '',
+          objective: currentDraftSession.soapNote.objective || '',
+          assessment: currentDraftSession.soapNote.assessment || '',
+          plan: currentDraftSession.soapNote.plan || ''
+        })
+      }
       if (currentDraftSession.durationMinutes) {
         setDuration(currentDraftSession.durationMinutes.toString())
       }
+      if (currentDraftSession.icd10Codes && currentDraftSession.icd10Codes.length > 0) {
+        setSelectedIcd10(currentDraftSession.icd10Codes[0])
+        setIcdSearch(currentDraftSession.icd10Codes[0])
+      }
     } else {
       setSoapData({ subjective: '', objective: '', assessment: '', plan: '' })
+      if (selectedPatient) {
+        const firstDiag = selectedPatient.diagnoses?.[0] || 'F80.2'
+        setSelectedIcd10(firstDiag)
+        setIcdSearch(firstDiag)
+      }
     }
-  }, [currentDraftSession, selectedPatientId])
+  }, [currentDraftSession, selectedPatientId, selectedPatient])
 
   // Save session mutation
   const saveMutation = useMutation({
@@ -142,16 +202,36 @@ const SOAPNote = () => {
       (chunk) => {
         accumulated += chunk
         
+        // Robust char-by-char key-value extractor to handle backslash escapes and JSON streaming structure
         const extractField = (key) => {
-          const regex = new RegExp(`"${key}"\\s*:\\s*"([^"]*)`)
-          const match = accumulated.match(regex)
-          if (match) {
-            return match[1]
-              .replace(/\\n/g, '\n')
-              .replace(/\\"/g, '"')
-              .replace(/\\t/g, '\t')
+          const keyStr = `"${key}"`;
+          const keyIndex = accumulated.indexOf(keyStr);
+          if (keyIndex === -1) return '';
+          
+          const colonIndex = accumulated.indexOf(':', keyIndex + keyStr.length);
+          if (colonIndex === -1) return '';
+          
+          const valueStartIndex = accumulated.indexOf('"', colonIndex + 1);
+          if (valueStartIndex === -1) return '';
+          
+          let value = '';
+          let escaped = false;
+          for (let i = valueStartIndex + 1; i < accumulated.length; i++) {
+            const char = accumulated[i];
+            if (escaped) {
+              if (char === 'n') value += '\n';
+              else if (char === 't') value += '\t';
+              else value += char;
+              escaped = false;
+            } else if (char === '\\') {
+              escaped = true;
+            } else if (char === '"') {
+              break;
+            } else {
+              value += char;
+            }
           }
-          return ''
+          return value;
         }
 
         setSoapData({
@@ -172,6 +252,7 @@ const SOAPNote = () => {
       patientId: selectedPatient.id,
       durationMinutes: parseInt(duration) || 45,
       cptCode: '92507',
+      icd10Codes: [selectedIcd10],
       soapNote: soapData,
       status
     }
@@ -180,6 +261,32 @@ const SOAPNote = () => {
       id: currentDraftSession?.id,
       payload
     })
+  }
+
+  const handleAssignHep = async (e) => {
+    e.preventDefault()
+    if (!hepName || !hepDescription) {
+      toast.error('Please fill out all required fields')
+      return
+    }
+    setIsAssigningHep(true)
+    try {
+      await api.exercises.assign({
+        patientId: selectedPatient.id,
+        name: hepName,
+        description: hepDescription,
+        frequency: hepFrequency,
+        dueDate: hepDueDate ? new Date(hepDueDate).toISOString() : null
+      })
+      toast.success('Home Exercise Program successfully assigned!')
+      setHepModalOpen(false)
+      setHepDescription('')
+      setHepDueDate('')
+    } catch (err) {
+      toast.error(`Failed to assign exercise: ${err.message}`)
+    } finally {
+      setIsAssigningHep(false)
+    }
   }
 
   return (
@@ -268,9 +375,49 @@ const SOAPNote = () => {
             </div>
           </div>
 
-          <div>
-            <label className="text-sm font-medium text-slate-700 mb-1 block">Primary ICD-10</label>
-            <Input defaultValue={selectedPatient.diagnoses[0] || 'F80.2'} readOnly className="bg-slate-100 font-semibold text-xs" />
+          {/* Searchable ICD-10 Dropdown */}
+          <div className="relative">
+            <label className="text-sm font-medium text-slate-700 mb-1 block">Primary ICD-10 Diagnosis</label>
+            <div className="flex gap-2">
+              <input 
+                type="text" 
+                placeholder="Search ICD-10 code or desc..."
+                value={icdSearch}
+                onChange={(e) => {
+                  setIcdSearch(e.target.value)
+                  setIcdDropdownOpen(true)
+                }}
+                onFocus={() => setIcdDropdownOpen(true)}
+                className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary shadow-xs"
+              />
+              <Badge variant="outline" className="h-10 px-3 flex items-center justify-center font-mono text-xs font-bold shrink-0 bg-slate-50 border-slate-200">
+                {selectedIcd10}
+              </Badge>
+            </div>
+            {icdDropdownOpen && (
+              <div className="absolute z-50 w-full bg-white border border-slate-200 rounded-md mt-1 shadow-lg max-h-48 overflow-y-auto">
+                {icd10Options
+                  .filter(opt => 
+                    opt.code.toLowerCase().includes(icdSearch.toLowerCase()) || 
+                    opt.desc.toLowerCase().includes(icdSearch.toLowerCase())
+                  )
+                  .map(opt => (
+                    <div 
+                      key={opt.code}
+                      className="px-3 py-2 text-xs hover:bg-slate-100 cursor-pointer flex justify-between items-center transition-colors"
+                      onClick={() => {
+                        setSelectedIcd10(opt.code)
+                        setIcdSearch(opt.code)
+                        setIcdDropdownOpen(false)
+                      }}
+                    >
+                      <span className="font-semibold text-slate-700">{opt.code}</span>
+                      <span className="text-slate-500 truncate max-w-[200px]">{opt.desc}</span>
+                    </div>
+                  ))
+                }
+              </div>
+            )}
           </div>
 
           {/* Goals Selection */}
@@ -339,11 +486,29 @@ const SOAPNote = () => {
               </CardHeader>
               <CardContent className="p-0">
                 <textarea 
-                  className="w-full min-h-[100px] p-4 resize-y focus:outline-none focus:ring-0 rounded-b-lg border-0 bg-transparent text-sm leading-relaxed"
+                  className="w-full min-h-[100px] p-4 resize-y focus:outline-none focus:ring-0 rounded-t-lg border-0 bg-transparent text-sm leading-relaxed"
                   placeholder="Parent/patient reports..."
                   value={soapData.subjective}
                   onChange={e => setSoapData({...soapData, subjective: e.target.value})}
                 />
+                <div className="flex flex-wrap gap-1.5 p-3 bg-slate-50/50 border-t border-slate-100 rounded-b-lg">
+                  <span className="text-[10px] font-bold text-slate-400 self-center uppercase mr-1">PRESETS:</span>
+                  {presets.subjective.map((preset, idx) => (
+                    <button 
+                      key={idx}
+                      type="button"
+                      className="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-md hover:bg-indigo-50 hover:text-indigo-700 transition-colors shadow-sm"
+                      onClick={() => {
+                        setSoapData(prev => ({
+                          ...prev,
+                          subjective: prev.subjective ? `${prev.subjective} ${preset}` : preset
+                        }))
+                      }}
+                    >
+                      + {preset}
+                    </button>
+                  ))}
+                </div>
               </CardContent>
             </Card>
 
@@ -353,11 +518,29 @@ const SOAPNote = () => {
               </CardHeader>
               <CardContent className="p-0">
                 <textarea 
-                  className="w-full min-h-[120px] p-4 resize-y focus:outline-none focus:ring-0 rounded-b-lg border-0 bg-transparent text-sm leading-relaxed"
+                  className="w-full min-h-[120px] p-4 resize-y focus:outline-none focus:ring-0 rounded-t-lg border-0 bg-transparent text-sm leading-relaxed"
                   placeholder="Clinician observations, data collected..."
                   value={soapData.objective}
                   onChange={e => setSoapData({...soapData, objective: e.target.value})}
                 />
+                <div className="flex flex-wrap gap-1.5 p-3 bg-slate-50/50 border-t border-slate-100 rounded-b-lg">
+                  <span className="text-[10px] font-bold text-slate-400 self-center uppercase mr-1">PRESETS:</span>
+                  {presets.objective.map((preset, idx) => (
+                    <button 
+                      key={idx}
+                      type="button"
+                      className="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-md hover:bg-indigo-50 hover:text-indigo-700 transition-colors shadow-sm"
+                      onClick={() => {
+                        setSoapData(prev => ({
+                          ...prev,
+                          objective: prev.objective ? `${prev.objective} ${preset}` : preset
+                        }))
+                      }}
+                    >
+                      + {preset}
+                    </button>
+                  ))}
+                </div>
               </CardContent>
             </Card>
 
@@ -367,25 +550,70 @@ const SOAPNote = () => {
               </CardHeader>
               <CardContent className="p-0">
                 <textarea 
-                  className="w-full min-h-[100px] p-4 resize-y focus:outline-none focus:ring-0 rounded-b-lg border-0 bg-transparent text-sm leading-relaxed"
+                  className="w-full min-h-[100px] p-4 resize-y focus:outline-none focus:ring-0 rounded-t-lg border-0 bg-transparent text-sm leading-relaxed"
                   placeholder="Clinical interpretation of progress..."
                   value={soapData.assessment}
                   onChange={e => setSoapData({...soapData, assessment: e.target.value})}
                 />
+                <div className="flex flex-wrap gap-1.5 p-3 bg-slate-50/50 border-t border-slate-100 rounded-b-lg">
+                  <span className="text-[10px] font-bold text-slate-400 self-center uppercase mr-1">PRESETS:</span>
+                  {presets.assessment.map((preset, idx) => (
+                    <button 
+                      key={idx}
+                      type="button"
+                      className="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-md hover:bg-indigo-50 hover:text-indigo-700 transition-colors shadow-sm"
+                      onClick={() => {
+                        setSoapData(prev => ({
+                          ...prev,
+                          assessment: prev.assessment ? `${prev.assessment} ${preset}` : preset
+                        }))
+                      }}
+                    >
+                      + {preset}
+                    </button>
+                  ))}
+                </div>
               </CardContent>
             </Card>
 
             <Card className="shadow-sm border-slate-200 hover:shadow-xs transition-shadow bg-white">
-              <CardHeader className="bg-slate-50 py-3 border-b border-slate-100">
+              <CardHeader className="bg-slate-50 py-2.5 border-b border-slate-100 flex flex-row items-center justify-between">
                 <CardTitle className="text-xs font-bold tracking-wide text-slate-700">P — PLAN</CardTitle>
+                <Button 
+                  size="xs" 
+                  variant="outline" 
+                  className="h-7 text-[11px] border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-semibold flex items-center gap-1 shrink-0"
+                  onClick={() => setHepModalOpen(true)}
+                  type="button"
+                >
+                  <Sparkles className="h-3 w-3" /> HEP Exercise Builder
+                </Button>
               </CardHeader>
               <CardContent className="p-0">
                 <textarea 
-                  className="w-full min-h-[100px] p-4 resize-y focus:outline-none focus:ring-0 rounded-b-lg border-0 bg-transparent text-sm leading-relaxed"
+                  className="w-full min-h-[100px] p-4 resize-y focus:outline-none focus:ring-0 rounded-t-lg border-0 bg-transparent text-sm leading-relaxed"
                   placeholder="Next steps, changes to treatment..."
                   value={soapData.plan}
                   onChange={e => setSoapData({...soapData, plan: e.target.value})}
                 />
+                <div className="flex flex-wrap gap-1.5 p-3 bg-slate-50/50 border-t border-slate-100 rounded-b-lg">
+                  <span className="text-[10px] font-bold text-slate-400 self-center uppercase mr-1">PRESETS:</span>
+                  {presets.plan.map((preset, idx) => (
+                    <button 
+                      key={idx}
+                      type="button"
+                      className="text-[10px] bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-md hover:bg-indigo-50 hover:text-indigo-700 transition-colors shadow-sm"
+                      onClick={() => {
+                        setSoapData(prev => ({
+                          ...prev,
+                          plan: prev.plan ? `${prev.plan} ${preset}` : preset
+                        }))
+                      }}
+                    >
+                      + {preset}
+                    </button>
+                  ))}
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -404,6 +632,101 @@ const SOAPNote = () => {
           </Button>
         </div>
       </div>
+
+      {/* Home Exercise Program (HEP) Builder Modal */}
+      {hepModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <Card className="max-w-md w-full shadow-2xl border-slate-200 p-6 space-y-4 bg-white">
+            <CardHeader className="p-0 pb-2 border-b">
+              <CardTitle className="text-lg font-heading text-slate-800 flex items-center gap-1.5">
+                <Sparkles className="h-5 w-5 text-indigo-500" />
+                Home Exercise Program Builder
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Assign clinical speech practice exercises to <strong>{selectedPatient.name}</strong>.
+              </CardDescription>
+            </CardHeader>
+            <form onSubmit={handleAssignHep} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Exercise Program Template</label>
+                <select 
+                  className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                  value={hepName}
+                  onChange={(e) => setHepName(e.target.value)}
+                >
+                  <option>R-phoneme Initial Practice</option>
+                  <option>S-phoneme Medial Practice</option>
+                  <option>Linguistic comprehension exercises</option>
+                  <option>Vocal range expansion</option>
+                  <option>Custom Practice Routine</option>
+                </select>
+              </div>
+
+              {hepName === 'Custom Practice Routine' && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Custom Title</label>
+                  <Input 
+                    placeholder="Enter custom exercise title..." 
+                    value={hepName === 'Custom Practice Routine' ? '' : hepName}
+                    onChange={(e) => setHepName(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Instructions / Description</label>
+                <textarea 
+                  className="flex min-h-[80px] w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary animate-in fade-in"
+                  placeholder="Provide instruction details (e.g. Practice R sound in front of a mirror 10 times)..."
+                  value={hepDescription}
+                  onChange={(e) => setHepDescription(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Frequency</label>
+                  <select 
+                    className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                    value={hepFrequency}
+                    onChange={(e) => setHepFrequency(e.target.value)}
+                  >
+                    <option>Once daily</option>
+                    <option>Twice daily</option>
+                    <option>3 times a week</option>
+                    <option>Weekly</option>
+                  </select>
+                </div>
+                
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Target Due Date</label>
+                  <Input 
+                    type="date"
+                    value={hepDueDate}
+                    onChange={(e) => setHepDueDate(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => { setHepModalOpen(false); setHepDescription(''); }}
+                  disabled={isAssigningHep}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isAssigningHep} className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold">
+                  {isAssigningHep ? 'Assigning...' : 'Assign to Parent Portal'}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
 
     </div>
   )

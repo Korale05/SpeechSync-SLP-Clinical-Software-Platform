@@ -95,8 +95,8 @@ router.post('/', authenticate, async (req, res) => {
   }
 });
 
-// PATCH /api/messages/:id/read — mark as read
-router.patch('/:id/read', authenticate, async (req, res) => {
+// PUT /api/messages/:id/read — mark as read
+router.put('/:id/read', authenticate, async (req, res) => {
   try {
     const msg = await prisma.message.update({
       where: { id: req.params.id },

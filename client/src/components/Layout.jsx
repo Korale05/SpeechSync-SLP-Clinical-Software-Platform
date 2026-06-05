@@ -11,6 +11,8 @@ const Layout = () => {
   const [showConsentModal, setShowConsentModal] = useState(false)
   const [selectedLang, setSelectedLang] = useState('en')
 
+
+  
   useEffect(() => {
     if (isAuthenticated && user && (user.role === ROLES.PARENT || user.role === ROLES.SCHOOL_COORDINATOR)) {
       const storedConsent = localStorage.getItem(`dpdpa_consent_${user.email}`)

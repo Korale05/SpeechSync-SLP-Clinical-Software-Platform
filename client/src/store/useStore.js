@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import api from '../services/api.js'
 
+
 const useStore = create((set, get) => ({
   patients: [],
   sessions: [],

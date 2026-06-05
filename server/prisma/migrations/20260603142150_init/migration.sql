@@ -1,6 +1,7 @@
 -- CreateEnum
 CREATE TYPE "Role" AS ENUM ('SLP', 'ADMIN', 'PARENT', 'SCHOOL_COORDINATOR');
 
+
 -- CreateEnum
 CREATE TYPE "SessionStatus" AS ENUM ('DRAFT', 'PENDING_COSIGN', 'SIGNED', 'LOCKED');
 

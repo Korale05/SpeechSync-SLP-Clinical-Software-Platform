@@ -3,6 +3,8 @@ import { PrismaClient } from '@prisma/client';
 import authenticate from '../middleware/authenticate.js';
 import { authorize } from '../middleware/authorize.js';
 
+
+
 const router = Router();
 const prisma = new PrismaClient();
 
