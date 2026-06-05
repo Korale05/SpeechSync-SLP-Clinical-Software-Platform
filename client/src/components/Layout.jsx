@@ -4,20 +4,60 @@ import Sidebar from './Sidebar'
 import useAuthStore, { ROLES } from '../store/authStore'
 import { Button } from './ui/button'
 import { ShieldCheck, Globe } from 'lucide-react'
+import { socket, connectSocket, disconnectSocket } from '../socket'
+import { useQueryClient } from '@tanstack/react-query'
 
 const Layout = () => {
   const { isAuthenticated, user } = useAuthStore()
   
   const [showConsentModal, setShowConsentModal] = useState(false)
   const [selectedLang, setSelectedLang] = useState('en')
+  const queryClient = useQueryClient();
 
 
   
   useEffect(() => {
-    if (isAuthenticated && user && (user.role === ROLES.PARENT || user.role === ROLES.SCHOOL_COORDINATOR)) {
-      const storedConsent = localStorage.getItem(`dpdpa_consent_${user.email}`)
-      if (!storedConsent) {
-        setShowConsentModal(true)
+    if (isAuthenticated && user) {
+      if (user.role === ROLES.PARENT || user.role === ROLES.SCHOOL_COORDINATOR) {
+        const storedConsent = localStorage.getItem(`dpdpa_consent_${user.email}`)
+        if (!storedConsent) {
+          setShowConsentModal(true)
+        }
+      }
+
+      // Initialize global socket connection and listeners
+      connectSocket(user.id);
+
+      const invalidatePatientData = () => {
+        queryClient.invalidateQueries({ queryKey: ['patient'] });
+        queryClient.invalidateQueries({ queryKey: ['patients'] });
+      };
+
+      const invalidateBillingData = () => {
+        queryClient.invalidateQueries({ queryKey: ['billing'] });
+        queryClient.invalidateQueries({ queryKey: ['invoices'] });
+        queryClient.invalidateQueries({ queryKey: ['patient'] });
+      };
+
+      socket.on('session_created', invalidatePatientData);
+      socket.on('session_updated', invalidatePatientData);
+      socket.on('session_deleted', invalidatePatientData);
+      socket.on('goal_updated', invalidatePatientData);
+      socket.on('goal_created', invalidatePatientData);
+      socket.on('invoice_created', invalidateBillingData);
+      socket.on('invoice_updated', invalidateBillingData);
+      socket.on('payment_received', invalidateBillingData);
+
+      return () => {
+        socket.off('session_created', invalidatePatientData);
+        socket.off('session_updated', invalidatePatientData);
+        socket.off('session_deleted', invalidatePatientData);
+        socket.off('goal_updated', invalidatePatientData);
+        socket.off('goal_created', invalidatePatientData);
+        socket.off('invoice_created', invalidateBillingData);
+        socket.off('invoice_updated', invalidateBillingData);
+        socket.off('payment_received', invalidateBillingData);
+        disconnectSocket();
       }
     }
   }, [isAuthenticated, user])

@@ -28,6 +28,7 @@ const patientSchema = z.object({
   insurancePolicy: z.string().optional(),
   diagnoses: z.string().min(2, 'Please enter at least one primary diagnosis'),
   assignedSlpId: z.string().min(1, 'Please select an assigned SLP'),
+  createParentPortalAccount: z.boolean().optional(),
 })
 
 const NewPatient = () => {
@@ -60,6 +61,7 @@ const NewPatient = () => {
       insurancePolicy: '',
       diagnoses: '',
       assignedSlpId: '',
+      createParentPortalAccount: false,
     }
   })
 
@@ -91,8 +93,20 @@ const NewPatient = () => {
         diagnoses: diagnosesArray,
       })
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast.success('Patient created successfully')
+      
+      if (data?.parentAccount) {
+        toast((t) => (
+          <div className="flex flex-col gap-2">
+            <p className="font-bold">Parent Account Created!</p>
+            <p className="text-sm">Username: {data.parentAccount.email}</p>
+            <p className="text-sm font-mono bg-slate-100 p-1 rounded">Password: {data.parentAccount.temporaryPassword}</p>
+            <Button size="sm" onClick={() => toast.dismiss(t.id)}>Dismiss</Button>
+          </div>
+        ), { duration: 10000 })
+      }
+
       queryClient.invalidateQueries({ queryKey: ['patients'] })
       navigate('/patients')
     },
@@ -205,6 +219,20 @@ const NewPatient = () => {
                 className={errors.guardianEmail ? 'border-destructive' : 'border-slate-200'}
               />
               {errors.guardianEmail && <p className="text-xs text-destructive">{errors.guardianEmail.message}</p>}
+            </div>
+
+            <div className="space-y-2 md:col-span-3 mt-2 border-t border-slate-100 pt-4">
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  {...register('createParentPortalAccount')}
+                  className="rounded border-slate-300 text-primary focus:ring-primary h-4 w-4"
+                />
+                Create Parent Portal Account
+              </label>
+              <p className="text-xs text-slate-500 pl-6">
+                If checked, an account will be automatically generated and linked to this patient. The guardian email above is required.
+              </p>
             </div>
           </CardContent>
         </Card>

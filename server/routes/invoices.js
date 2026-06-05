@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import authenticate from '../middleware/authenticate.js';
 import { authorize } from '../middleware/authorize.js';
 import PDFDocument from 'pdfkit';
+import { emitToPatientRoom } from '../socket.js';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -140,6 +141,8 @@ router.post('/invoices', authenticate, authorize('ADMIN'), async (req, res) => {
         details: { invoiceNumber, totalAmount }
       }
     });
+
+    emitToPatientRoom(patientId, 'invoice_created', result.invoice);
 
     res.status(201).json(result);
   } catch (error) {
@@ -320,6 +323,8 @@ router.patch('/invoices/:id', authenticate, authorize('ADMIN'), async (req, res)
       }
     });
 
+    emitToPatientRoom(invoice.patientId, 'invoice_updated', updated);
+
     res.json(updated);
   } catch (error) {
     console.error('Update invoice error:', error);
@@ -369,6 +374,9 @@ router.post('/payments', authenticate, authorize('ADMIN'), async (req, res) => {
         details: { invoiceId, patientId: invoice.patientId, amount }
       }
     });
+
+    emitToPatientRoom(invoice.patientId, 'payment_received', payment);
+    emitToPatientRoom(invoice.patientId, 'invoice_updated', { id: invoiceId });
 
     res.status(201).json(payment);
   } catch (error) {

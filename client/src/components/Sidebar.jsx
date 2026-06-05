@@ -28,7 +28,7 @@ const Sidebar = () => {
         { to: '/patients', icon: Users, label: 'Patients' },
         { to: '/scheduling', icon: ClipboardList, label: 'Scheduling' },
         { to: '/assessments/new', icon: FileText, label: 'Assessments' },
-        { to: '/sessions/new', icon: FileText, label: 'SOAP Notes' },
+        { to: '/ai-session-form', icon: FileText, label: 'AI Assistant' },
         { to: '/teletherapy', icon: Video, label: 'Teletherapy' },
       ]
       break
@@ -46,11 +46,13 @@ const Sidebar = () => {
       break
     case ROLES.PARENT:
       links = [
-        { to: '/portal', icon: Home, label: 'Parent Portal' },
+        { to: '/parent/dashboard', icon: Home, label: 'Parent Portal' },
+        { to: '/parent/billing', icon: CreditCard, label: 'Billing Center' },
       ]
       break
     case ROLES.SCHOOL_COORDINATOR:
       links = [
+        { to: '/school/dashboard', icon: Home, label: 'School Dashboard' },
         { to: '/iep', icon: GraduationCap, label: 'IEP Tracking' },
       ]
       break

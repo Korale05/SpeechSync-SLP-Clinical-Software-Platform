@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import authenticate from '../middleware/authenticate.js';
 import { authorize } from '../middleware/authorize.js';
+import { emitToPatientRoom } from '../socket.js';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -20,6 +21,14 @@ async function canAccessSession(user, session) {
       select: { parentUserId: true }
     });
     return patient?.parentUserId === user.id;
+  }
+  if (user.role === 'SCHOOL_COORDINATOR') {
+    const school = await prisma.school.findUnique({ where: { userId: user.id } });
+    if (!school) return false;
+    const mapping = await prisma.schoolPatientMapping.findUnique({
+      where: { schoolId_patientId: { schoolId: school.id, patientId: session.patientId } }
+    });
+    return !!mapping;
   }
   return false;
 }
@@ -52,8 +61,24 @@ router.get('/', authenticate, async (req, res) => {
         include: { patient: true },
         orderBy: { dateOfService: 'desc' },
       });
+    } else if (req.user.role === 'SCHOOL_COORDINATOR') {
+      const school = await prisma.school.findUnique({ where: { userId: req.user.id } });
+      if (!school) {
+        return res.status(404).json({ error: 'School profile not found' });
+      }
+      sessions = await prisma.session.findMany({
+        where: {
+          patient: {
+            schools: {
+              some: { schoolId: school.id }
+            }
+          }
+        },
+        include: { patient: true },
+        orderBy: { dateOfService: 'desc' },
+      });
     } else {
-      // ADMIN or SCHOOL_COORDINATOR can see all
+      // ADMIN can see all
       sessions = await prisma.session.findMany({
         include: { patient: true },
         orderBy: { dateOfService: 'desc' },
@@ -133,6 +158,33 @@ router.post('/', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
       }
     });
 
+    // Handle Goal Progress updates if locked
+    if ((status === 'LOCKED' || status === 'SIGNED') && req.body.goalProgressUpdates?.length > 0) {
+      for (const update of req.body.goalProgressUpdates) {
+        // Create progress history record
+        await prisma.goalProgress.create({
+          data: {
+            goalId: update.goalId,
+            value: parseInt(update.value) || 0,
+            notes: `Progress logged from session ${session.id}`
+          }
+        });
+        
+        // Update the Goal's current value and potentially status
+        const goal = await prisma.goal.findUnique({ where: { id: update.goalId } });
+        if (goal) {
+          const newVal = parseInt(update.value) || 0;
+          const newStatus = newVal >= goal.target ? 'MET' : 'IN_PROGRESS';
+          await prisma.goal.update({
+            where: { id: goal.id },
+            data: { current: newVal, status: newStatus }
+          });
+        }
+      }
+    }
+
+    emitToPatientRoom(patientId, 'session_created', session);
+
     res.status(201).json(session);
   } catch (error) {
     console.error('Create session error:', error);
@@ -202,6 +254,44 @@ router.put('/:id', authenticate, async (req, res) => {
       });
     }
 
+    // Handle Goal Progress updates if locking
+    if ((status === 'LOCKED' || status === 'SIGNED') && req.body.goalProgressUpdates?.length > 0) {
+      for (const update of req.body.goalProgressUpdates) {
+        // Prevent duplicate progress for same session if editing
+        const existingProgress = await prisma.goalProgress.findFirst({
+          where: { goalId: update.goalId, notes: { contains: session.id } }
+        });
+        
+        if (existingProgress) {
+          await prisma.goalProgress.update({
+            where: { id: existingProgress.id },
+            data: { value: parseInt(update.value) || 0 }
+          });
+        } else {
+          await prisma.goalProgress.create({
+            data: {
+              goalId: update.goalId,
+              value: parseInt(update.value) || 0,
+              notes: `Progress logged from session ${session.id}`
+            }
+          });
+        }
+        
+        // Update the Goal's current value and potentially status
+        const goal = await prisma.goal.findUnique({ where: { id: update.goalId } });
+        if (goal) {
+          const newVal = parseInt(update.value) || 0;
+          const newStatus = newVal >= goal.target ? 'MET' : 'IN_PROGRESS';
+          await prisma.goal.update({
+            where: { id: goal.id },
+            data: { current: newVal, status: newStatus }
+          });
+        }
+      }
+    }
+
+    emitToPatientRoom(session.patientId, 'session_updated', updatedSession);
+
     res.json(updatedSession);
   } catch (error) {
     console.error('Update session error:', error);
@@ -242,6 +332,8 @@ router.delete('/:id', authenticate, authorize('SLP', 'ADMIN'), async (req, res) 
         details: { patientId: session.patientId }
       }
     });
+
+    emitToPatientRoom(session.patientId, 'session_deleted', { id });
 
     res.json({ message: 'Session deleted successfully' });
   } catch (error) {

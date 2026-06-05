@@ -15,6 +15,8 @@ import PatientBillingTab from '../components/billing/PatientBillingTab'
 import PatientProgressTab from '../components/patient/PatientProgressTab'
 import PatientSoapNotesTab from '../components/patient/PatientSoapNotesTab'
 import AiSessionForm from './AiSessionForm'
+import ChatWindow from '../components/ChatWindow'
+import { MessageCircle } from 'lucide-react'
 
 const PatientProfile = ({ overridePatientId, activeSessionId }) => {
   const { id: paramId } = useParams()
@@ -116,6 +118,7 @@ const PatientProfile = ({ overridePatientId, activeSessionId }) => {
 
   const [viewingAssessment, setViewingAssessment] = useState(null)
   const [linkingAssessment, setLinkingAssessment] = useState(null)
+  const [isChatOpen, setIsChatOpen] = useState(false)
 
   const linkGoalMutation = useMutation({
     mutationFn: ({ goalId, progressValue }) => {
@@ -237,8 +240,13 @@ const PatientProfile = ({ overridePatientId, activeSessionId }) => {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => navigate(`/sessions/new?patientId=${patient.id}`)}>
-            <FileText className="mr-2 h-4 w-4" /> SOAP Note
+          {patient.parentUserId && (
+            <Button variant="outline" className="border-emerald-200 text-emerald-700 hover:bg-emerald-50" onClick={() => setIsChatOpen(true)}>
+              <MessageCircle className="mr-2 h-4 w-4" /> Message Parent
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => navigate(`/ai-session-form?patientId=${patient.id}`)}>
+            <Sparkles className="mr-2 h-4 w-4 text-purple-500" /> AI Assistant
           </Button>
           <Button onClick={() => navigate(`/assessments/new?patientId=${patient.id}`)}>
             <Activity className="mr-2 h-4 w-4" /> Assessment
@@ -247,7 +255,7 @@ const PatientProfile = ({ overridePatientId, activeSessionId }) => {
       </div>
 
       <Tabs 
-        defaultValue="overview" 
+        defaultValue={activeSessionId ? "soap-notes" : "overview"} 
         className="w-full"
         onValueChange={(val) => {
           // Refetch fresh data on tab switch
@@ -789,25 +797,28 @@ const PatientProfile = ({ overridePatientId, activeSessionId }) => {
                   {timelineEvents.map((evt) => {
                     const getIconAndColors = (type) => {
                       switch (type) {
-                        case 'session':
+                        case 'soap_saved':
+                        case 'soap_signed':
+                        case 'teletherapy_completed':
                           return {
                             icon: <FileText className="h-5 w-5 text-blue-600" />,
                             bg: 'bg-blue-50 border-blue-200',
                             badgeColor: 'bg-blue-100 text-blue-800'
                           };
                         case 'assessment':
+                        case 'assessment_created':
                           return {
                             icon: <Activity className="h-5 w-5 text-purple-600" />,
                             bg: 'bg-purple-50 border-purple-200',
                             badgeColor: 'bg-purple-100 text-purple-800'
                           };
-                        case 'billing_invoice':
+                        case 'invoice_created':
                           return {
                             icon: <Receipt className="h-5 w-5 text-amber-600" />,
                             bg: 'bg-amber-50 border-amber-200',
                             badgeColor: 'bg-amber-100 text-amber-800'
                           };
-                        case 'billing_payment':
+                        case 'payment_received':
                           return {
                             icon: <CreditCard className="h-5 w-5 text-emerald-600" />,
                             bg: 'bg-emerald-50 border-emerald-200',
@@ -819,11 +830,18 @@ const PatientProfile = ({ overridePatientId, activeSessionId }) => {
                             bg: 'bg-rose-50 border-rose-200',
                             badgeColor: 'bg-rose-100 text-rose-800'
                           };
-                        case 'billing_paid':
+                        case 'appointment_created':
+                        case 'appointment_completed':
                           return {
-                            icon: <CheckCircle2 className="h-5 w-5 text-emerald-700" />,
-                            bg: 'bg-emerald-100 border-emerald-300',
-                            badgeColor: 'bg-emerald-600 text-white'
+                            icon: <Calendar className="h-5 w-5 text-indigo-600" />,
+                            bg: 'bg-indigo-50 border-indigo-200',
+                            badgeColor: 'bg-indigo-100 text-indigo-800'
+                          };
+                        case 'document_uploaded':
+                          return {
+                            icon: <File className="h-5 w-5 text-slate-600" />,
+                            bg: 'bg-slate-100 border-slate-300',
+                            badgeColor: 'bg-slate-200 text-slate-800'
                           };
                         case 'goal_progress':
                           return {
@@ -1077,6 +1095,14 @@ const PatientProfile = ({ overridePatientId, activeSessionId }) => {
         </TabsContent>
 
       </Tabs>
+
+      <ChatWindow 
+        isOpen={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        recipientId={patient.parentUserId}
+        patientId={patient.id}
+        title={`Message Parent (${patient.guardianName})`}
+      />
     </div>
   )
 }

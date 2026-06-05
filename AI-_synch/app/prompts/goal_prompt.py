@@ -81,13 +81,18 @@ def build_goal_prompt(data: dict) -> str:
     diagnoses = ', '.join(data.get('diagnosis', []))
 
     # Assessment block
-    assessment = data.get('assessment', {})
+    assessment_data = data.get('assessment', {})
+    if isinstance(assessment_data, list):
+        assessment = assessment_data[0] if assessment_data else {}
+    else:
+        assessment = assessment_data
+
     if assessment:
         assess_block = f"""
 Assessment results:
-  Test            : {assessment.get('test', 'not provided')}
+  Test            : {assessment.get('test', assessment.get('testName', 'not provided'))}
   Standard Score  : {assessment.get('standardScore', 'not provided')}
-  Severity        : {assessment.get('severity', 'not provided')}
+  Severity        : {assessment.get('severity', assessment.get('severityLabel', 'not provided'))}
   Percentile      : {assessment.get('percentile', 'not provided')}"""
     else:
         assess_block = "\nAssessment results: not provided"

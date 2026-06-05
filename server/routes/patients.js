@@ -45,17 +45,20 @@ router.get('/', authenticate, async (req, res) => {
           }
         },
       });
-    } else if (req.query.role === 'school' || req.user.role === 'SCHOOL_COORDINATOR') {
-      let clinician = await prisma.clinician.findFirst({
+    } else if (req.user.role === 'SCHOOL_COORDINATOR') {
+      const school = await prisma.school.findUnique({
         where: { userId: req.user.id }
       });
-      if (!clinician) {
-        clinician = await prisma.clinician.findFirst();
+      if (!school) {
+        return res.status(404).json({ error: 'School profile not found' });
       }
-      const clinicianId = clinician ? clinician.id : '';
-      whereClause.assignedSlpId = clinicianId;
       patients = await prisma.patient.findMany({
-        where: whereClause,
+        where: {
+          ...whereClause,
+          schools: {
+            some: { schoolId: school.id }
+          }
+        },
         include: {
           goals: true,
           assessments: true,
@@ -154,9 +157,19 @@ router.get('/:id', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Patient not found' });
     }
 
-    // HIPAA check for Parent role
+    // HIPAA check for Parent & School roles
     if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden: Access restricted to assigned parent account.' });
+    }
+    
+    if (req.user.role === 'SCHOOL_COORDINATOR') {
+      const school = await prisma.school.findUnique({ where: { userId: req.user.id } });
+      if (!school) return res.status(403).json({ error: 'Forbidden: No school profile found.' });
+      
+      const mapping = await prisma.schoolPatientMapping.findUnique({
+        where: { schoolId_patientId: { schoolId: school.id, patientId: patient.id } }
+      });
+      if (!mapping) return res.status(403).json({ error: 'Forbidden: Student not assigned to your school.' });
     }
 
     res.json(patient);
@@ -168,7 +181,7 @@ router.get('/:id', authenticate, async (req, res) => {
 
 // Create new patient (SLP/ADMIN only)
 router.post('/', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
-  const { name, dob, gender, guardianName, guardianPhone, guardianEmail, insuranceCarrier, insurancePolicy, diagnoses, diagnosis, assignedSlpId, createParentPortalAccount } = req.body;
+  const { name, dob, gender, guardianName, guardianPhone, guardianEmail, insuranceCarrier, insurancePolicy, diagnoses, diagnosis, assignedSlpId, createParentPortalAccount, createSchoolPortalAccount, schoolName, schoolCoordinatorName, schoolEmail, schoolPhone } = req.body;
 
   if (!name || !dob || !guardianName || !guardianPhone) {
     return res.status(400).json({ error: 'Missing required fields: name, dob, guardianName, and guardianPhone are required.' });
@@ -200,16 +213,14 @@ router.post('/', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
         return res.status(400).json({ error: 'Guardian Email is required to create a Parent Portal account.' });
       }
 
-      const existingUser = await prisma.user.findUnique({
+      let existingUser = await prisma.user.findUnique({
         where: { email: guardianEmail }
       });
 
-      if (existingUser) {
-        parentUserId = existingUser.id;
-      } else {
+      if (!existingUser) {
         const temporaryPassword = `Temp@${Math.floor(10000 + Math.random() * 90000)}`;
         const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
-        const parentUser = await prisma.user.create({
+        existingUser = await prisma.user.create({
           data: {
             email: guardianEmail,
             name: guardianName,
@@ -218,7 +229,6 @@ router.post('/', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
             createdBy: req.user.id
           }
         });
-        parentUserId = parentUser.id;
         parentAccount = {
           email: guardianEmail,
           temporaryPassword
@@ -230,8 +240,79 @@ router.post('/', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
             userId: req.user.id,
             action: 'USER_CREATED',
             resource: 'USER',
-            resourceId: parentUser.id,
+            resourceId: existingUser.id,
             details: { email: guardianEmail, role: 'PARENT' }
+          }
+        });
+      }
+      parentUserId = existingUser.id;
+
+      // Ensure Parent record exists
+      const existingParent = await prisma.parent.findUnique({ where: { userId: parentUserId } });
+      if (!existingParent) {
+        await prisma.parent.create({
+          data: {
+            userId: parentUserId,
+            name: guardianName || existingUser.name,
+            email: guardianEmail,
+            phone: guardianPhone,
+            relationship: 'Guardian'
+          }
+        });
+      }
+    }
+
+    let schoolUserId = null;
+    let schoolAccount = null;
+
+    if (createSchoolPortalAccount) {
+      if (!schoolEmail) {
+        return res.status(400).json({ error: 'School Email is required to create a School Portal account.' });
+      }
+
+      let existingSchoolUser = await prisma.user.findUnique({
+        where: { email: schoolEmail }
+      });
+
+      if (!existingSchoolUser) {
+        const temporaryPassword = `Temp@${Math.floor(10000 + Math.random() * 90000)}`;
+        const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+        existingSchoolUser = await prisma.user.create({
+          data: {
+            email: schoolEmail,
+            name: schoolCoordinatorName || schoolName,
+            password: hashedPassword,
+            role: 'SCHOOL_COORDINATOR',
+            createdBy: req.user.id
+          }
+        });
+        schoolAccount = {
+          email: schoolEmail,
+          temporaryPassword
+        };
+
+        await prisma.auditLog.create({
+          data: {
+            userId: req.user.id,
+            action: 'USER_CREATED',
+            resource: 'USER',
+            resourceId: existingSchoolUser.id,
+            details: { email: schoolEmail, role: 'SCHOOL_COORDINATOR' }
+          }
+        });
+      }
+      schoolUserId = existingSchoolUser.id;
+
+      // Ensure School record exists
+      const existingSchool = await prisma.school.findUnique({ where: { userId: schoolUserId } });
+      if (!existingSchool) {
+        await prisma.school.create({
+          data: {
+            userId: schoolUserId,
+            name: schoolName || 'Unknown School',
+            coordinatorName: schoolCoordinatorName,
+            email: schoolEmail,
+            phone: schoolPhone
           }
         });
       }
@@ -261,6 +342,31 @@ router.post('/', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
       },
     });
 
+    // Create Mappings
+    if (parentUserId) {
+      const parentRecord = await prisma.parent.findUnique({ where: { userId: parentUserId } });
+      if (parentRecord) {
+        await prisma.parentPatientMapping.create({
+          data: {
+            parentId: parentRecord.id,
+            patientId: patient.id
+          }
+        });
+      }
+    }
+
+    if (schoolUserId) {
+      const schoolRecord = await prisma.school.findUnique({ where: { userId: schoolUserId } });
+      if (schoolRecord) {
+        await prisma.schoolPatientMapping.create({
+          data: {
+            schoolId: schoolRecord.id,
+            patientId: patient.id
+          }
+        });
+      }
+    }
+
     // Log action
     await prisma.auditLog.create({
       data: {
@@ -274,7 +380,8 @@ router.post('/', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
 
     res.status(201).json({
       ...patient,
-      parentAccount
+      parentAccount,
+      schoolAccount
     });
   } catch (error) {
     console.error('Create patient error:', error);
@@ -329,6 +436,64 @@ router.patch('/:id', authenticate, authorize('SLP', 'ADMIN'), async (req, res) =
       data: updateData,
     });
 
+    let parentAccount = null;
+    let schoolAccount = null;
+
+    if (req.body.createParentPortalAccount && guardianEmail) {
+      let existingUser = await prisma.user.findUnique({ where: { email: guardianEmail } });
+      if (!existingUser) {
+        const temporaryPassword = `Temp@${Math.floor(10000 + Math.random() * 90000)}`;
+        const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+        existingUser = await prisma.user.create({
+          data: {
+            email: guardianEmail,
+            name: guardianName || patient.guardianName,
+            password: hashedPassword,
+            role: 'PARENT',
+            createdBy: req.user.id
+          }
+        });
+        parentAccount = { email: guardianEmail, temporaryPassword };
+
+        await prisma.auditLog.create({
+          data: {
+            userId: req.user.id,
+            action: 'USER_CREATED',
+            resource: 'USER',
+            resourceId: existingUser.id,
+            details: { email: guardianEmail, role: 'PARENT' }
+          }
+        });
+      }
+
+      let existingParent = await prisma.parent.findUnique({ where: { userId: existingUser.id } });
+      if (!existingParent) {
+        existingParent = await prisma.parent.create({
+          data: {
+            userId: existingUser.id,
+            name: guardianName || patient.guardianName || existingUser.name,
+            email: guardianEmail,
+            phone: patient.guardianPhone,
+            relationship: 'Guardian'
+          }
+        });
+      }
+
+      await prisma.patient.update({
+        where: { id },
+        data: { parentUserId: existingUser.id }
+      });
+
+      const existingMapping = await prisma.parentPatientMapping.findUnique({
+        where: { parentId_patientId: { parentId: existingParent.id, patientId: id } }
+      });
+      if (!existingMapping) {
+        await prisma.parentPatientMapping.create({
+          data: { parentId: existingParent.id, patientId: id }
+        });
+      }
+    }
+
     // Log action
     await prisma.auditLog.create({
       data: {
@@ -340,7 +505,7 @@ router.patch('/:id', authenticate, authorize('SLP', 'ADMIN'), async (req, res) =
       }
     });
 
-    res.json(patient);
+    res.json({ ...patient, parentAccount, schoolAccount });
   } catch (error) {
     console.error('Update patient error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -408,6 +573,15 @@ router.get('/:id/timeline', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Forbidden: Access restricted' });
     }
 
+    if (req.user.role === 'SCHOOL_COORDINATOR') {
+      const school = await prisma.school.findUnique({ where: { userId: req.user.id } });
+      if (!school) return res.status(403).json({ error: 'Forbidden: No school profile' });
+      const mapping = await prisma.schoolPatientMapping.findUnique({
+        where: { schoolId_patientId: { schoolId: school.id, patientId: id } }
+      });
+      if (!mapping) return res.status(403).json({ error: 'Forbidden' });
+    }
+
     const events = [];
 
     // 1. Assessment Created / Administered
@@ -463,7 +637,7 @@ router.get('/:id/timeline', authenticate, async (req, res) => {
         events.push({
           id: `progress-${p.id}`,
           date: new Date(p.recordedAt),
-          type: 'goal_updated',
+          type: 'goal_progress',
           title: `Goal Progress Logged: ${g.domain}`,
           description: `Accuracy achieved: ${p.value}% (Target: ${g.target}%)`,
           details: `Goal Text: ${g.goalText}`,
@@ -558,6 +732,14 @@ router.get('/:id/assessments', authenticate, async (req, res) => {
     if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden: Access restricted' });
     }
+    if (req.user.role === 'SCHOOL_COORDINATOR') {
+      const school = await prisma.school.findUnique({ where: { userId: req.user.id } });
+      if (!school) return res.status(403).json({ error: 'Forbidden' });
+      const mapping = await prisma.schoolPatientMapping.findUnique({
+        where: { schoolId_patientId: { schoolId: school.id, patientId: id } }
+      });
+      if (!mapping) return res.status(403).json({ error: 'Forbidden' });
+    }
 
     const assessments = await prisma.assessment.findMany({
       where: { patientId: id },
@@ -578,6 +760,14 @@ router.get('/:id/goals', authenticate, async (req, res) => {
     if (!patient) return res.status(404).json({ error: 'Patient not found' });
     if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden: Access restricted' });
+    }
+    if (req.user.role === 'SCHOOL_COORDINATOR') {
+      const school = await prisma.school.findUnique({ where: { userId: req.user.id } });
+      if (!school) return res.status(403).json({ error: 'Forbidden' });
+      const mapping = await prisma.schoolPatientMapping.findUnique({
+        where: { schoolId_patientId: { schoolId: school.id, patientId: id } }
+      });
+      if (!mapping) return res.status(403).json({ error: 'Forbidden' });
     }
 
     const goals = await prisma.goal.findMany({
@@ -603,6 +793,14 @@ router.get('/:id/sessions', authenticate, async (req, res) => {
     if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden: Access restricted' });
     }
+    if (req.user.role === 'SCHOOL_COORDINATOR') {
+      const school = await prisma.school.findUnique({ where: { userId: req.user.id } });
+      if (!school) return res.status(403).json({ error: 'Forbidden' });
+      const mapping = await prisma.schoolPatientMapping.findUnique({
+        where: { schoolId_patientId: { schoolId: school.id, patientId: id } }
+      });
+      if (!mapping) return res.status(403).json({ error: 'Forbidden' });
+    }
 
     const sessions = await prisma.session.findMany({
       where: { patientId: id },
@@ -623,6 +821,14 @@ router.get('/:id/billing', authenticate, async (req, res) => {
     if (!patient) return res.status(404).json({ error: 'Patient not found' });
     if (req.user.role === 'PARENT' && patient.parentUserId !== req.user.id) {
       return res.status(403).json({ error: 'Forbidden: Access restricted' });
+    }
+    if (req.user.role === 'SCHOOL_COORDINATOR') {
+      const school = await prisma.school.findUnique({ where: { userId: req.user.id } });
+      if (!school) return res.status(403).json({ error: 'Forbidden' });
+      const mapping = await prisma.schoolPatientMapping.findUnique({
+        where: { schoolId_patientId: { schoolId: school.id, patientId: id } }
+      });
+      if (!mapping) return res.status(403).json({ error: 'Forbidden' });
     }
 
     const invoices = await prisma.invoice.findMany({
@@ -769,6 +975,15 @@ router.get('/:id/progress', authenticate, async (req, res) => {
       orderBy: { dateOfService: 'asc' }
     });
 
+    const goals = await prisma.goal.findMany({
+      where: { patientId: id },
+      include: {
+        progressHistory: {
+          orderBy: { recordedAt: 'asc' }
+        }
+      }
+    });
+
     // Formatting progress data
     const assessmentScores = assessments.map(a => ({
       date: new Date(a.dateAdministered).toLocaleDateString('en-IN'),
@@ -781,9 +996,24 @@ router.get('/:id/progress', authenticate, async (req, res) => {
       attended: s.status === 'COMPLETED' || s.status === 'SIGNED' || s.status === 'LOCKED' ? 1 : 0
     }));
 
+    // Format goals for trendlines
+    const goalTrends = goals.map(g => {
+      return {
+        id: g.id,
+        goalText: g.goalText,
+        domain: g.domain,
+        target: g.target,
+        history: g.progressHistory.map(p => ({
+          date: new Date(p.recordedAt).toLocaleDateString('en-IN'),
+          value: p.value
+        }))
+      };
+    });
+
     res.json({
       assessmentScores,
       sessionAttendance,
+      goalTrends,
       totalSessions: sessions.length,
       completedSessions: sessions.filter(s => s.status === 'COMPLETED' || s.status === 'SIGNED' || s.status === 'LOCKED').length,
       assessmentsCompleted: assessments.length,

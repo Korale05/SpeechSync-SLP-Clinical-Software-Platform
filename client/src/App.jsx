@@ -20,6 +20,8 @@ import ClinicalWorkspace from './pages/ClinicalWorkspace'
 import Goals from './pages/Goals'
 import Billing from './pages/Billing'
 import Portal from './pages/Portal'
+import ParentDashboard from './pages/ParentDashboard'
+import SchoolDashboard from './pages/SchoolDashboard'
 import IEP from './pages/IEP'
 import Scheduling from './pages/Scheduling'
 import AuditLogs from './pages/AuditLogs'
@@ -49,6 +51,7 @@ function App() {
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={<Login />} />
+          <Route path="/portal" element={<Portal />} />
 
           {/* Secure Layout Routes */}
           <Route element={<ProtectedRoute />}>
@@ -80,11 +83,12 @@ function App() {
 
               {/* Parent Only */}
               <Route element={<ProtectedRoute allowedRoles={[ROLES.PARENT]} />}>
-                <Route path="/portal" element={<Portal />} />
+                <Route path="/parent/dashboard" element={<ParentDashboard />} />
               </Route>
 
               {/* School Coordinator & Admin */}
               <Route element={<ProtectedRoute allowedRoles={[ROLES.SCHOOL_COORDINATOR, ROLES.ADMIN]} />}>
+                <Route path="/school/dashboard" element={<SchoolDashboard />} />
                 <Route path="/iep" element={<IEP />} />
               </Route>
 

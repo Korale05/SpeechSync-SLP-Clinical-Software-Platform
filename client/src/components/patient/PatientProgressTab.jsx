@@ -1,7 +1,7 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { Activity, CheckCircle2, TrendingUp, CalendarDays } from 'lucide-react';
+import { Activity, CheckCircle2, TrendingUp, CalendarDays, Target } from 'lucide-react';
 
 const PatientProgressTab = ({ progressData, isLoading }) => {
   if (isLoading) {
@@ -12,7 +12,7 @@ const PatientProgressTab = ({ progressData, isLoading }) => {
     return <div className="p-8 text-center text-slate-500 italic">No progress data available.</div>;
   }
 
-  const { assessmentScores = [], sessionAttendance = [], totalSessions, completedSessions, assessmentsCompleted, lastAssessmentDate } = progressData;
+  const { assessmentScores = [], sessionAttendance = [], goalTrends = [], totalSessions, completedSessions, assessmentsCompleted, lastAssessmentDate } = progressData;
 
   // Simple improvement calculation based on first and last assessment scores
   let improvementPercentage = 0;
@@ -113,6 +113,43 @@ const PatientProgressTab = ({ progressData, isLoading }) => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Goal Progress Trendlines */}
+      {goalTrends.length > 0 && (
+        <div className="space-y-6">
+          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <Target className="h-5 w-5 text-indigo-500" />
+            Goal Progress Trends
+          </h3>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {goalTrends.map(goal => (
+              <Card key={goal.id} className="rounded-xl border-slate-200 bg-white shadow-xs">
+                <CardHeader>
+                  <CardTitle className="text-sm line-clamp-1">{goal.goalText}</CardTitle>
+                  <CardDescription>Target: {goal.target}% | {goal.domain}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {goal.history && goal.history.length > 0 ? (
+                    <div className="h-48">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={goal.history} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                          <XAxis dataKey="date" tick={{fontSize: 12, fill: '#64748b'}} />
+                          <YAxis tick={{fontSize: 12, fill: '#64748b'}} domain={[0, 100]} />
+                          <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                          <Line type="monotone" dataKey="value" name="Accuracy %" stroke="#6366f1" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-48 flex items-center justify-center text-slate-400 italic">No progress data logged yet</div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

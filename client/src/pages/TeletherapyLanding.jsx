@@ -38,7 +38,7 @@ export default function TeletherapyLanding() {
     mutationFn: (pid) => api.teletherapy.createDirectSession(pid),
     onSuccess: (data) => {
       toast.success('Clinical workspace created!')
-      navigate(`/clinical-assistant/${data.sessionId}`)
+      navigate(`/ai-session-form?patientId=${patientId}`)
     },
     onError: (err) => {
       toast.error(`Failed to create clinical workspace: ${err.message}`)

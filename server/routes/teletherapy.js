@@ -25,71 +25,25 @@ router.post('/create-room', authenticate, authorize('SLP', 'ADMIN'), async (req,
       return res.status(404).json({ error: 'Appointment not found' });
     }
 
-    // Check if room URL already exists
-    if (appt.dailyRoomUrl) {
-      return res.json({ url: appt.dailyRoomUrl, roomName: `speechsync-${resolvedApptId}`, isMock: !process.env.DAILY_CO_API_KEY });
+    // Check if room URL already exists and is a Jitsi URL
+    if (appt.dailyRoomUrl && appt.dailyRoomUrl.includes('8x8.vc')) {
+      return res.json({ url: appt.dailyRoomUrl, roomName: `speechsync-${resolvedApptId}` });
     }
 
-    if (!process.env.DAILY_CO_API_KEY) {
-      // Mock response for demo without Daily.co key
-      const mockUrl = `https://meet.google.com/mock-${resolvedApptId}`;
-      await prisma.appointment.update({
-        where: { id: resolvedApptId },
-        data: { dailyRoomUrl: mockUrl }
-      });
-      return res.json({ url: mockUrl, roomName: `speechsync-${resolvedApptId}`, isMock: true });
-    }
+    // TODO: Add JITSI_API_KEY and JITSI_JWT_TOKEN to your .env file
+    const JITSI_API_KEY = process.env.JITSI_API_KEY || "YOUR_JITSI_API_KEY";
+    const JITSI_JWT_TOKEN = process.env.JITSI_JWT_TOKEN || "YOUR_JITSI_JWT_TOKEN";
+    const jitsiUrl = `https://8x8.vc/${JITSI_API_KEY}/speechsync-${resolvedApptId}?jwt=${JITSI_JWT_TOKEN}`;
 
-    // Make request to Daily.co API
-    const response = await fetch('https://api.daily.co/v1/rooms', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.DAILY_CO_API_KEY}`
-      },
-      body: JSON.stringify({
-        name: `speechsync-${resolvedApptId}-${Date.now()}`,
-        privacy: 'private',
-        properties: {
-          exp: Math.round(Date.now() / 1000) + 3600, // 1 hour expiration
-          enable_recording: 'cloud',
-          enable_screenshare: true,
-          max_participants: 4
-        }
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.warn('Daily.co API error, falling back to mock:', errorText);
-      const mockUrl = `https://meet.google.com/mock-${resolvedApptId}`;
-      await prisma.appointment.update({
-        where: { id: resolvedApptId },
-        data: { dailyRoomUrl: mockUrl }
-      });
-      return res.json({ url: mockUrl, roomName: `speechsync-${resolvedApptId}`, isMock: true });
-    }
-
-    const room = await response.json();
-
-    // Save room URL to appointment
     await prisma.appointment.update({
       where: { id: resolvedApptId },
-      data: { dailyRoomUrl: room.url }
+      data: { dailyRoomUrl: jitsiUrl } // using existing field for backward compatibility
     });
 
-    res.json({ url: room.url, roomName: room.name, isMock: false });
+    res.json({ url: jitsiUrl, roomName: `speechsync-${resolvedApptId}` });
   } catch (error) {
     console.error('Create room error:', error);
-    // Fallback to mock on error
-    const mockUrl = `https://meet.google.com/mock-${resolvedApptId}`;
-    try {
-      await prisma.appointment.update({
-        where: { id: resolvedApptId },
-        data: { dailyRoomUrl: mockUrl }
-      });
-    } catch (e) {}
-    res.json({ url: mockUrl, roomName: `speechsync-${resolvedApptId}`, isMock: true });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

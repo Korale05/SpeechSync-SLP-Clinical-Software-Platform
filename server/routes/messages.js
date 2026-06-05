@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import authenticate from '../middleware/authenticate.js';
+import { emitToUser } from '../socket.js';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -47,30 +48,34 @@ router.get('/history/:userId', authenticate, async (req, res) => {
 // POST /api/messages — send message
 router.post('/', authenticate, async (req, res) => {
   try {
-    const { toUserId, patientId, subject, body } = req.body;
+    const { toUserId, patientId, subject, body, attachmentUrl } = req.body;
     
     // Fallback/lookup logic for default SLP or Parent user if not fully specified
     let resolvedToUserId = toUserId;
     let resolvedPatientId = patientId;
 
     if (req.user.role === 'PARENT') {
-      // Find parent's child and child's SLP
-      const patient = await prisma.patient.findFirst({
-        where: { parentUserId: req.user.id },
-        include: { assignedSlp: true }
+      // Find parent's mapping
+      const parentRecord = await prisma.parent.findUnique({
+        where: { userId: req.user.id },
+        include: { patients: { include: { patient: { include: { assignedSlp: true } } } } }
       });
-      if (patient) {
-        resolvedPatientId = patient.id;
-        resolvedToUserId = patient.assignedSlp?.userId;
+      if (parentRecord && parentRecord.patients.length > 0) {
+        // Just pick the first patient for now, or use patientId if provided
+        const patient = patientId ? parentRecord.patients.find(p => p.patientId === patientId)?.patient : parentRecord.patients[0].patient;
+        if (patient) {
+          resolvedPatientId = patient.id;
+          resolvedToUserId = patient.assignedSlp?.userId;
+        }
       }
     } else if (req.user.role === 'SLP') {
-      // If parentId was sent, find the parent's user account
       if (patientId) {
         const patient = await prisma.patient.findUnique({
-          where: { id: patientId }
+          where: { id: patientId },
+          include: { parents: { include: { parent: true } } }
         });
-        if (patient && patient.parentUserId) {
-          resolvedToUserId = patient.parentUserId;
+        if (patient && patient.parents.length > 0) {
+          resolvedToUserId = patient.parents[0].parent.userId;
         }
       }
     }
@@ -79,15 +84,55 @@ router.post('/', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Recipient userId could not be determined.' });
     }
 
+    // Find or create conversation
+    let conversation = await prisma.conversation.findFirst({
+      where: {
+        AND: [
+          { participantIds: { has: req.user.id } },
+          { participantIds: { has: resolvedToUserId } }
+        ]
+      }
+    });
+
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          participantIds: [req.user.id, resolvedToUserId]
+        }
+      });
+    }
+
     const msg = await prisma.message.create({
       data: {
         fromUserId: req.user.id,
         toUserId: resolvedToUserId,
         patientId: resolvedPatientId || '',
         subject: subject || 'Secure message',
-        body
+        body,
+        attachmentUrl,
+        conversationId: conversation.id
       }
     });
+
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { updatedAt: new Date() }
+    });
+
+    // Create Notification for the recipient
+    await prisma.notification.create({
+      data: {
+        userId: resolvedToUserId,
+        title: 'New Message',
+        body: `You received a new message from ${req.user.email}`,
+        type: 'MESSAGE'
+      }
+    });
+
+    // Emit real-time event
+    emitToUser(resolvedToUserId, 'new_message', msg);
+    emitToUser(resolvedToUserId, 'new_notification', { message: 'You have a new message' });
+
     res.status(201).json(msg);
   } catch (error) {
     console.error('Send message error:', error);

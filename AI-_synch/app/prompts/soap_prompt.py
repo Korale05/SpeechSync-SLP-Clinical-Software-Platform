@@ -89,8 +89,9 @@ Clinician observations:
             prev    = g.get('previous_accuracy', 'not reported')
             target  = g.get('target_accuracy', 80)
             status  = g.get('status', 'in progress')
+            goal_text = g.get('description', g.get('goalText', g.get('goal', 'not specified')))
             goals_block += (
-                f"\n  - Goal    : {g['description']}"
+                f"\n  - Goal    : {goal_text}"
                 f"\n    Previous: {prev}%  |  Target: {target}%  |  Status: {status}"
             )
         else:

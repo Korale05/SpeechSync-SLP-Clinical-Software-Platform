@@ -41,37 +41,17 @@ const TeletherapyRoom = () => {
   const [isVideoOff, setIsVideoOff] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   
-  const [isEditingLink, setIsEditingLink] = useState(false)
-  const [meetUrl, setMeetUrl] = useState('')
-  const [tempMeetUrl, setTempMeetUrl] = useState('')
-
-  useEffect(() => {
-    if (roomData?.url) {
-      setMeetUrl(roomData.url)
-      setTempMeetUrl(roomData.url)
-    } else if (appointment?.dailyRoomUrl) {
-      setMeetUrl(appointment.dailyRoomUrl)
-      setTempMeetUrl(appointment.dailyRoomUrl)
-    }
-  }, [roomData, appointment])
+  // Read Jitsi configurations from environment variables
+  const JITSI_API_KEY = import.meta.env.VITE_JITSI_API_KEY || ""; 
+  const JITSI_JWT_TOKEN = import.meta.env.VITE_JITSI_JWT_TOKEN || "";
+  
+  // Jitsi as a Service (JaaS) room URL. If using self-hosted, use https://meet.jit.si/${sessionId}?jwt=${JITSI_JWT_TOKEN}
+  const jitsiRoomUrl = `https://8x8.vc/${JITSI_API_KEY}/speechsync-${sessionId}?jwt=${JITSI_JWT_TOKEN}`;
 
   useEffect(() => {
     const timer = setInterval(() => setSessionTime(t => t + 1), 1000)
     return () => clearInterval(timer)
   }, [])
-
-  // Update room URL mutation
-  const updateMeetUrlMutation = useMutation({
-    mutationFn: (url) => api.appointments.updateStatus(sessionId, { dailyRoomUrl: url }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['appointment', sessionId] })
-      toast.success('Teletherapy link updated successfully!')
-      setIsEditingLink(false)
-    },
-    onError: (err) => {
-      toast.error(`Failed to update link: ${err.message}`)
-    }
-  })
 
   // End session mutation
   const endSessionMutation = useMutation({
@@ -82,8 +62,8 @@ const TeletherapyRoom = () => {
       queryClient.invalidateQueries({ queryKey: ['patient-sessions'] });
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
       
-      toast.success('Session completed! Navigating to Clinical Workspace.');
-      navigate(`/clinical-assistant/${sessionId}`);
+      toast.success('Session completed! Navigating to AI Clinical Assistant.');
+      navigate(`/ai-session-form?patientId=${selectedPatient?.id}`);
     },
     onError: (err) => {
       toast.error(`Failed to end session: ${err.message}`);
@@ -135,91 +115,16 @@ const TeletherapyRoom = () => {
           </div>
         </div>
 
-        {/* Video Mock / Meet Input */}
+        {/* Jitsi Video Call Integration */}
         <div className="flex-1 bg-slate-950 relative flex items-center justify-center pt-12">
-          {meetUrl && meetUrl.includes('daily.co') ? (
-            <div className="w-full h-full p-4 pb-16">
-              <iframe
-                src={meetUrl}
-                allow="camera; microphone; fullscreen; speaker; display-capture"
-                className="w-full h-full border border-slate-850 rounded-2xl bg-slate-950 shadow-2xl animate-in zoom-in-95 duration-300"
-                title="Secure Teletherapy Session"
-              />
-            </div>
-          ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950 p-6">
-              <div className="text-center max-w-lg bg-slate-900/90 border border-slate-800 rounded-2xl p-8 shadow-2xl backdrop-blur-md">
-                <div className="flex justify-center mb-4">
-                  <div className="bg-primary/10 p-4 rounded-full border border-primary/20 animate-pulse">
-                    <Video className="h-10 w-10 text-primary" />
-                  </div>
-                </div>
-
-                <h2 className="text-2xl font-bold text-white mb-2 font-heading">Google Meet Integration</h2>
-                <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-                  Start an external video session using Google Meet for a lag-free, high-quality video call. The parent portal will automatically update with this link.
-                </p>
-
-                {/* Meet Link Display & Edit */}
-                <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 mb-6 flex flex-col gap-3">
-                  <div className="flex justify-between items-center text-xs text-slate-400">
-                    <span>MEETING LINK</span>
-                    <button
-                      onClick={() => {
-                        if (isEditingLink) {
-                          updateMeetUrlMutation.mutate(tempMeetUrl)
-                        } else {
-                          setTempMeetUrl(meetUrl)
-                          setIsEditingLink(true)
-                        }
-                      }}
-                      className="text-primary hover:underline font-semibold"
-                      disabled={updateMeetUrlMutation.isPending}
-                    >
-                      {updateMeetUrlMutation.isPending ? 'Saving...' : isEditingLink ? 'Save Link' : 'Edit Link'}
-                    </button>
-                  </div>
-
-                  {isEditingLink ? (
-                    <input
-                      type="text"
-                      value={tempMeetUrl}
-                      onChange={(e) => setTempMeetUrl(e.target.value)}
-                      placeholder="https://meet.google.com/..."
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary"
-                    />
-                  ) : (
-                    <div className="text-slate-200 text-sm font-mono break-all font-semibold select-all bg-slate-900/60 p-2 rounded-lg border border-slate-850">
-                      {meetUrl || 'No room URL configured.'}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                  <Button
-                    onClick={() => { if (meetUrl) window.open(meetUrl, '_blank') }}
-                    disabled={!meetUrl}
-                    className="bg-primary hover:bg-primary/95 text-white px-6 py-3 h-12 rounded-xl font-semibold shadow-md flex items-center justify-center gap-2"
-                  >
-                    🎥 Launch Google Meet
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      if (meetUrl) {
-                        navigator.clipboard.writeText(meetUrl)
-                        toast.success('Meet invitation link copied to clipboard!')
-                      }
-                    }}
-                    disabled={!meetUrl}
-                    className="border-slate-800 hover:bg-slate-800 text-slate-300 px-6 py-3 h-12 rounded-xl font-semibold bg-transparent"
-                  >
-                    Copy Invitation
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
+          <div className="w-full h-full p-4 pb-16">
+            <iframe
+              src={jitsiRoomUrl}
+              allow="camera; microphone; fullscreen; speaker; display-capture"
+              className="w-full h-full border border-slate-850 rounded-2xl bg-slate-950 shadow-2xl animate-in zoom-in-95 duration-300"
+              title="Secure Teletherapy Session"
+            />
+          </div>
 
           {/* SLP Video (PiP) */}
           <div className="absolute bottom-24 right-6 w-48 h-32 bg-slate-900 rounded-xl border-2 border-slate-700 shadow-2xl overflow-hidden z-20">

@@ -21,7 +21,13 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   clinician     Clinician?
+  parent        Parent?
+  school        School?
+  notifications Notification[]
+  reportDownloads ReportDownload[]
   auditLogs     AuditLog[]
+  sentMessages  Message[] @relation("SentMessages")
+  receivedMessages Message[] @relation("ReceivedMessages")
 }
 
 enum Role {
@@ -58,6 +64,10 @@ model Patient {
   documents    Document[]
   messages     Message[]
   payments     Payment[]
+  parents      ParentPatientMapping[]
+  schools      SchoolPatientMapping[]
+  reports      Report[]
+  iepStudents  IepStudent[]
   createdAt    DateTime @default(now())
 
   @@index([assignedSlpId])
@@ -69,6 +79,7 @@ model Session {
   patientId     String
   patient       Patient  @relation(fields: [patientId], references: [id])
   clinicianId   String
+  clinician     Clinician @relation(fields: [clinicianId], references: [id])
   dateOfService DateTime
   durationMinutes Int
   cptCode       String
@@ -87,6 +98,7 @@ model Session {
   meetingRoomId String?
   meetingDuration Int?
   createdAt     DateTime @default(now())
+  billingRecords BillingRecord[]
 
   @@index([patientId])
   @@index([clinicianId])
@@ -159,6 +171,7 @@ model BillingRecord {
   patientId   String
   patient     Patient  @relation(fields: [patientId], references: [id])
   sessionId   String?
+  session     Session? @relation(fields: [sessionId], references: [id])
   dateOfService DateTime
   cptCodes    String[]
   icd10Codes  String[]
@@ -193,14 +206,17 @@ model Clinician {
   phone         String?
   department    String?
   patients      Patient[]
+  sessions      Session[]
+  appointments  Appointment[]
   createdAt     DateTime @default(now())
 }
 
 model Appointment {
   id              String   @id @default(uuid())
-  patientId       String
-  patient         Patient  @relation(fields: [patientId], references: [id])
+  patientId       String?
+  patient         Patient?  @relation(fields: [patientId], references: [id])
   clinicianId     String
+  clinician       Clinician @relation(fields: [clinicianId], references: [id])
   startTime       DateTime
   durationMinutes Int
   type            String   // "Individual Therapy" | "Telepractice" | "Evaluation"
@@ -239,19 +255,25 @@ model HomeExercise {
 }
 
 model Message {
-  id         String   @id @default(uuid())
-  fromUserId String
-  toUserId   String
-  patientId  String
-  patient    Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  subject    String
-  body       String
-  readAt     DateTime?
-  createdAt  DateTime @default(now())
+  id             String   @id @default(uuid())
+  fromUserId     String
+  fromUser       User     @relation("SentMessages", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUserId       String
+  toUser         User     @relation("ReceivedMessages", fields: [toUserId], references: [id], onDelete: Cascade)
+  patientId      String?
+  patient        Patient?  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  subject        String
+  body           String
+  attachmentUrl  String?
+  readAt         DateTime?
+  createdAt      DateTime @default(now())
 
   @@index([patientId])
   @@index([fromUserId])
   @@index([toUserId])
+  @@index([conversationId])
 }
 
 model AuditLog {
@@ -276,6 +298,7 @@ model IepStudent {
   currentGoalPercent Float
   lastSession        DateTime
   patientId          String?
+  patient            Patient? @relation(fields: [patientId], references: [id])
   createdAt          DateTime @default(now())
 
   @@index([patientId])
@@ -356,3 +379,96 @@ enum InvoiceStatus {
   CANCELLED
 }
 
+model Parent {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  email     String?
+  phone     String?
+  relationship String?
+  patients  ParentPatientMapping[]
+  createdAt DateTime @default(now())
+}
+
+model School {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  coordinatorName String?
+  email           String?
+  phone           String?
+  patients        SchoolPatientMapping[]
+  createdAt       DateTime @default(now())
+}
+
+model ParentPatientMapping {
+  id        String   @id @default(uuid())
+  parentId  String
+  parent    Parent   @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  patientId String
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([parentId, patientId])
+  @@index([patientId])
+}
+
+model SchoolPatientMapping {
+  id        String   @id @default(uuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  patientId String
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([schoolId, patientId])
+  @@index([patientId])
+}
+
+model Conversation {
+  id            String   @id @default(uuid())
+  participantIds String[]
+  messages      Message[]
+  updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  type      String   // MESSAGE, GOAL_UPDATE, SESSION_COMPLETED, NEW_BILL, PAYMENT_RECEIVED
+  isRead    Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Report {
+  id          String   @id @default(uuid())
+  patientId   String
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  type        String   // PROGRESS, CLINICAL_SUMMARY
+  generatedBy String   // Clinician ID
+  fileUrl     String
+  createdAt   DateTime @default(now())
+  downloads   ReportDownload[]
+
+  @@index([patientId])
+}
+
+model ReportDownload {
+  id          String   @id @default(uuid())
+  reportId    String
+  report      Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  downloadedBy String  // User ID
+  user        User     @relation(fields: [downloadedBy], references: [id], onDelete: Cascade)
+  downloadedAt DateTime @default(now())
+
+  @@index([reportId])
+}

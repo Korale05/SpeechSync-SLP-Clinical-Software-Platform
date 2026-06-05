@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import authenticate from '../middleware/authenticate.js';
 import { authorize } from '../middleware/authorize.js';
+import { emitToUser, emitToPatientRoom } from '../socket.js';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -196,6 +197,9 @@ router.post('/:id/progress', authenticate, authorize('SLP', 'ADMIN'), async (req
       }
     });
 
+    // Notify Room
+    emitToPatientRoom(goal.patientId, 'goal_updated', updatedGoal);
+
     res.json(point);
   } catch (error) {
     console.error('Record goal progress error:', error);
@@ -238,6 +242,9 @@ router.post('/', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
         details: { patientId, domain }
       }
     });
+
+    // Notify Room
+    emitToPatientRoom(patientId, 'goal_created', goal);
 
     res.status(201).json(goal);
   } catch (error) {
@@ -298,6 +305,8 @@ router.put('/:id/progress', authenticate, authorize('SLP', 'ADMIN'), async (req,
         }
       }
     });
+
+    emitToPatientRoom(goal.patientId, 'goal_updated', updated);
 
     res.json(updated);
   } catch (error) {

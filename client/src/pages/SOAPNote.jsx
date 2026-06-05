@@ -55,6 +55,7 @@ const SOAPNote = () => {
   const queryPatientId = searchParams.get('patientId')
   const [selectedPatientId, setSelectedPatientId] = useState(queryPatientId || '')
   const [selectedGoals, setSelectedGoals] = useState({})
+  const [goalProgressData, setGoalProgressData] = useState({})
   const [sessionType, setSessionType] = useState('Individual Speech Therapy')
   const [duration, setDuration] = useState('45')
 
@@ -169,14 +170,25 @@ const SOAPNote = () => {
     if (checked) {
       const goal = patientGoals.find(g => g.id === goalId)
       if (goal) {
+        setGoalProgressData(prev => ({ ...prev, [goalId]: goal.current || 0 }))
         setSoapData(prev => ({
           ...prev,
           objective: prev.objective 
-            ? `${prev.objective}\n• Addressed Goal: ${goal.goalText} (Accuracy: ${goal.current}%)`
-            : `• Addressed Goal: ${goal.goalText} (Accuracy: ${goal.current}%)`
+            ? `${prev.objective}\n• Addressed Goal: ${goal.goalText} (Target: ${goal.target}%)`
+            : `• Addressed Goal: ${goal.goalText} (Target: ${goal.target}%)`
         }))
       }
+    } else {
+      setGoalProgressData(prev => {
+        const next = { ...prev }
+        delete next[goalId]
+        return next
+      })
     }
+  }
+
+  const handleGoalProgressChange = (goalId, value) => {
+    setGoalProgressData(prev => ({ ...prev, [goalId]: parseInt(value) || 0 }))
   }
 
   // AI Scribe Stream Handler
@@ -248,12 +260,21 @@ const SOAPNote = () => {
   }
 
   const handleSave = (status) => {
+    // Only send goal progress if signing/locking the session
+    const goalsToUpdate = status === 'LOCKED' || status === 'SIGNED' ? Object.keys(selectedGoals)
+      .filter(id => selectedGoals[id])
+      .map(id => ({
+        goalId: id,
+        value: goalProgressData[id] || 0
+      })) : [];
+
     const payload = {
       patientId: selectedPatient.id,
       durationMinutes: parseInt(duration) || 45,
       cptCode: '92507',
       icd10Codes: [selectedIcd10],
       soapNote: soapData,
+      goalProgressUpdates: goalsToUpdate,
       status
     }
 
@@ -433,13 +454,30 @@ const SOAPNote = () => {
                       : 'bg-white border-slate-200 text-slate-500'
                   }`}
                 >
-                  <input 
-                    type="checkbox" 
-                    checked={!!selectedGoals[goal.id]}
-                    onChange={(e) => handleGoalCheck(goal.id, e.target.checked)}
-                    className="rounded text-primary focus:ring-primary h-4 w-4 mt-0.5" 
-                  />
-                  <span className="text-xs leading-normal">{goal.goalText}</span>
+                  <div className="flex flex-col w-full gap-2">
+                    <div className="flex items-start gap-2.5">
+                      <input 
+                        type="checkbox" 
+                        checked={!!selectedGoals[goal.id]}
+                        onChange={(e) => handleGoalCheck(goal.id, e.target.checked)}
+                        className="rounded text-primary focus:ring-primary h-4 w-4 mt-0.5 shrink-0" 
+                      />
+                      <span className="text-xs leading-normal">{goal.goalText}</span>
+                    </div>
+                    {!!selectedGoals[goal.id] && (
+                      <div className="pl-6 flex items-center gap-2">
+                        <label className="text-[10px] font-semibold text-slate-500 uppercase">Session Accuracy %:</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={goalProgressData[goal.id] || 0}
+                          onChange={(e) => handleGoalProgressChange(goal.id, e.target.value)}
+                          className="w-16 h-7 text-xs border-slate-200 rounded px-2"
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
               {patientGoals.length === 0 && (

@@ -1,9 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
+import http from 'http';
 import authRoutes from './routes/auth.js';
+import { initSocket } from './socket.js';
 import patientRoutes from './routes/patients.js';
 import sessionRoutes from './routes/sessions.js';
 import assessmentRoutes from './routes/assessments.js';
@@ -19,8 +22,9 @@ import teletherapyRoutes from './routes/teletherapy.js';
 import iepRoutes from './routes/iep.js';
 import userRoutes from './routes/users.js';
 import invoiceRoutes from './routes/invoices.js';
+import parentRoutes from './routes/parentRoutes.js';
+import schoolRoutes from './routes/schoolRoutes.js';
 import documentRoutes from './routes/documents.js';
-
 dotenv.config();
 
 // Enforce validation of JWT_SECRET and DATABASE_URL
@@ -35,6 +39,9 @@ if (!process.env.JWT_SECRET) {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Security Headers
+app.use(helmet());
 
 // Enable CORS
 app.use(cors({
@@ -55,6 +62,15 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
 });
 app.use('/api/', apiLimiter);
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // Strict limit for auth endpoints
+  message: { error: 'Too many login attempts from this IP, please try again after 15 minutes' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/auth', authLimiter);
 
 // Status endpoint
 app.get('/api/status', (req, res) => {
@@ -106,7 +122,12 @@ app.use('/api/teletherapy', teletherapyRoutes);
 app.use('/api/iep', iepRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/documents', documentRoutes);
+app.use('/api/parent', parentRoutes);
+app.use('/api/school', schoolRoutes);
 app.use('/api', invoiceRoutes);
+
+const server = http.createServer(app);
+initSocket(server);
 
 // Global Error Handler
 app.use((err, req, res, next) => {
@@ -114,7 +135,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`SpeechSync Backend Server running on port ${PORT}`);
 });
 

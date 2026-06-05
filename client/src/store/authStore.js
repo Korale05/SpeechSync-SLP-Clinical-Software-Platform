@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import api from '../services/api.js'
+import { connectSocket, disconnectSocket } from '../socket.js'
 
 export const ROLES = {
   SLP: 'SLP',
@@ -21,6 +22,7 @@ const useAuthStore = create((set) => ({
       localStorage.setItem('speechsync_token', response.token);
       localStorage.setItem('speechsync_user', JSON.stringify(response.user));
       set({ user: response.user, isAuthenticated: true });
+      connectSocket(response.user.id);
       return true;
     } catch (error) {
       console.error('Login error:', error);
@@ -37,6 +39,7 @@ const useAuthStore = create((set) => ({
     localStorage.removeItem('speechsync_token');
     localStorage.removeItem('speechsync_user');
     set({ user: null, isAuthenticated: false });
+    disconnectSocket();
   },
 }))
 

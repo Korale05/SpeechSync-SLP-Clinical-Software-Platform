@@ -149,4 +149,132 @@ router.get('/iep/:patientId', authenticate, authorize('SCHOOL_COORDINATOR', 'ADM
   }
 });
 
+// GET /api/reports/:patientId/download (Comprehensive Patient Report)
+router.get('/:patientId/download', authenticate, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    
+    // Fetch patient data with necessary relations
+    const patient = await prisma.patient.findUnique({
+      where: { id: patientId },
+      include: {
+        assignedSlp: true,
+        sessions: {
+          orderBy: { dateOfService: 'desc' },
+          take: 5
+        },
+        goals: true,
+        assessments: {
+          orderBy: { dateAdministered: 'desc' },
+          take: 3
+        },
+        invoices: {
+          where: { status: { notIn: ['PAID', 'CANCELLED'] } }
+        }
+      }
+    });
+
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    // Role-based access control
+    if (req.user.role === 'PARENT') {
+      const parentUserMap = await prisma.parent.findUnique({ where: { userId: req.user.id }, include: { patients: true } });
+      const isParent = parentUserMap?.patients.some(p => p.patientId === patientId);
+      if (!isParent) {
+         return res.status(403).json({ error: 'Forbidden' });
+      }
+    } else if (req.user.role === 'SCHOOL_COORDINATOR') {
+      const schoolUserMap = await prisma.school.findUnique({ where: { userId: req.user.id }, include: { patients: true } });
+      const isSchool = schoolUserMap?.patients.some(p => p.patientId === patientId);
+      if (!isSchool) {
+         return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
+
+    // Create a PDF document
+    const doc = new PDFDocument({ margin: 50 });
+    
+    // Set response headers to prompt a file download
+    res.setHeader('Content-disposition', `attachment; filename="SpeechSync_Report_${patient.name.replace(/\\s+/g, '_')}.pdf"`);
+    res.setHeader('Content-type', 'application/pdf');
+
+    // Pipe the PDF document to the response
+    doc.pipe(res);
+
+    // Title and Header
+    doc.fontSize(20).text('SpeechSync Clinical Report', { align: 'center' });
+    doc.moveDown();
+    
+    // Patient Summary
+    doc.fontSize(16).text('Patient Summary', { underline: true });
+    doc.fontSize(12).text(`Name: ${patient.name}`);
+    doc.text(`DOB: ${new Date(patient.dob).toLocaleDateString()}`);
+    doc.text(`Diagnosis: ${patient.diagnoses.join(', ')}`);
+    doc.text(`Assigned SLP: ${patient.assignedSlp?.name}`);
+    doc.moveDown();
+
+    // Goals
+    doc.fontSize(16).text('Active Goals', { underline: true });
+    patient.goals.forEach(goal => {
+      doc.fontSize(12).text(`- [${goal.domain}] ${goal.goalText}`);
+      doc.fontSize(10).text(`  Status: ${goal.status} | Target: ${goal.target}%`);
+    });
+    doc.moveDown();
+
+    // Recent Sessions
+    doc.fontSize(16).text('Recent Sessions', { underline: true });
+    patient.sessions.forEach(session => {
+      doc.fontSize(12).text(`- Date: ${new Date(session.dateOfService).toLocaleDateString()}`);
+      doc.fontSize(10).text(`  Duration: ${session.durationMinutes} min | CPT: ${session.cptCode}`);
+      if (session.soapNote) {
+         doc.text(`  Note: ${JSON.stringify(session.soapNote)}`);
+      }
+      doc.moveDown(0.5);
+    });
+    doc.moveDown();
+
+    // Recent Assessments
+    doc.fontSize(16).text('Recent Assessments', { underline: true });
+    patient.assessments.forEach(assessment => {
+      doc.fontSize(12).text(`- ${assessment.testName} (${new Date(assessment.dateAdministered).toLocaleDateString()})`);
+      doc.fontSize(10).text(`  Standard Score: ${assessment.standardScore || 'N/A'}`);
+    });
+    doc.moveDown();
+
+    // Billing Summary (Only for Parent / Admin / SLP)
+    if (req.user.role !== 'SCHOOL_COORDINATOR') {
+      doc.fontSize(16).text('Billing Summary', { underline: true });
+      const outstanding = patient.invoices.reduce((sum, inv) => sum + inv.balanceAmount, 0);
+      doc.fontSize(12).text(`Outstanding Balance: $${outstanding.toFixed(2)}`);
+    }
+
+    // Finalize the PDF
+    doc.end();
+
+    // Log the download
+    const reportRecord = await prisma.report.create({
+      data: {
+        patientId: patientId,
+        type: 'PROGRESS',
+        generatedBy: req.user.id,
+        fileUrl: 'generated_on_the_fly'
+      }
+    });
+    await prisma.reportDownload.create({
+      data: {
+        reportId: reportRecord.id,
+        downloadedBy: req.user.id
+      }
+    });
+
+  } catch (error) {
+    console.error('Report generation error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error during report generation' });
+    }
+  }
+});
+
 export default router;
