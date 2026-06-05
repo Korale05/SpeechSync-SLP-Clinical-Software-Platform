@@ -14,6 +14,7 @@ import LoadingScreen from '../components/LoadingScreen'
 import PatientBillingTab from '../components/billing/PatientBillingTab'
 import PatientProgressTab from '../components/patient/PatientProgressTab'
 import PatientSoapNotesTab from '../components/patient/PatientSoapNotesTab'
+import PatientVisitHistoryTable from '../components/PatientVisitHistoryTable'
 import AiSessionForm from './AiSessionForm'
 import ChatWindow from '../components/ChatWindow'
 import { MessageCircle } from 'lucide-react'
@@ -272,7 +273,7 @@ const PatientProfile = ({ overridePatientId, activeSessionId }) => {
       >
         <TabsList className="flex flex-wrap w-full mb-8 bg-slate-100/80 rounded-xl p-1 border border-slate-200/50 justify-start gap-1 h-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="timeline">Timeline</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="assessments">Assessments</TabsTrigger>
           <TabsTrigger value="soap-notes">SOAP Notes</TabsTrigger>
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
@@ -784,125 +785,11 @@ const PatientProfile = ({ overridePatientId, activeSessionId }) => {
           </Card>
         </TabsContent>
         
-        {/* History Timeline Tab */}
-        <TabsContent value="timeline">
-          <Card className="rounded-xl border-slate-200 bg-white">
-            <CardHeader>
-              <CardTitle>Aggregated Patient History</CardTitle>
-              <CardDescription>A chronological timeline of sessions, assessments, billing transitions, and goal progress</CardDescription>
-            </CardHeader>
-            <CardContent className="p-6">
-              {timelineEvents.length > 0 ? (
-                <div className="relative border-l-2 border-slate-200 ml-6 pl-8 space-y-8 py-2">
-                  {timelineEvents.map((evt) => {
-                    const getIconAndColors = (type) => {
-                      switch (type) {
-                        case 'soap_saved':
-                        case 'soap_signed':
-                        case 'teletherapy_completed':
-                          return {
-                            icon: <FileText className="h-5 w-5 text-blue-600" />,
-                            bg: 'bg-blue-50 border-blue-200',
-                            badgeColor: 'bg-blue-100 text-blue-800'
-                          };
-                        case 'assessment':
-                        case 'assessment_created':
-                          return {
-                            icon: <Activity className="h-5 w-5 text-purple-600" />,
-                            bg: 'bg-purple-50 border-purple-200',
-                            badgeColor: 'bg-purple-100 text-purple-800'
-                          };
-                        case 'invoice_created':
-                          return {
-                            icon: <Receipt className="h-5 w-5 text-amber-600" />,
-                            bg: 'bg-amber-50 border-amber-200',
-                            badgeColor: 'bg-amber-100 text-amber-800'
-                          };
-                        case 'payment_received':
-                          return {
-                            icon: <CreditCard className="h-5 w-5 text-emerald-600" />,
-                            bg: 'bg-emerald-50 border-emerald-200',
-                            badgeColor: 'bg-emerald-100 text-emerald-800'
-                          };
-                        case 'billing_refund':
-                          return {
-                            icon: <X className="h-5 w-5 text-rose-600" />,
-                            bg: 'bg-rose-50 border-rose-200',
-                            badgeColor: 'bg-rose-100 text-rose-800'
-                          };
-                        case 'appointment_created':
-                        case 'appointment_completed':
-                          return {
-                            icon: <Calendar className="h-5 w-5 text-indigo-600" />,
-                            bg: 'bg-indigo-50 border-indigo-200',
-                            badgeColor: 'bg-indigo-100 text-indigo-800'
-                          };
-                        case 'document_uploaded':
-                          return {
-                            icon: <File className="h-5 w-5 text-slate-600" />,
-                            bg: 'bg-slate-100 border-slate-300',
-                            badgeColor: 'bg-slate-200 text-slate-800'
-                          };
-                        case 'goal_progress':
-                          return {
-                            icon: <Sparkles className="h-5 w-5 text-pink-600" />,
-                            bg: 'bg-pink-50 border-pink-200',
-                            badgeColor: 'bg-pink-100 text-pink-800'
-                          };
-                        default:
-                          return {
-                            icon: <Activity className="h-5 w-5 text-slate-600" />,
-                            bg: 'bg-slate-50 border-slate-200',
-                            badgeColor: 'bg-slate-100 text-slate-800'
-                          };
-                      }
-                    };
-
-                    const style = getIconAndColors(evt.type);
-
-                    return (
-                      <div key={evt.id} className="relative group transition-all duration-300 hover:translate-x-1">
-                        {/* Timeline Marker icon */}
-                        <div className={`absolute -left-[49px] top-1 h-9 w-9 rounded-full border-2 border-white flex items-center justify-center shadow-sm ${style.bg}`}>
-                          {style.icon}
-                        </div>
-
-                        {/* Event Card Content */}
-                        <div className="bg-slate-50/40 border border-slate-200 hover:border-slate-300/80 p-5 rounded-2xl shadow-xs transition-all duration-300">
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-                            <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5 font-sans">
-                              <Calendar className="h-3.5 w-3.5" />
-                              {new Date(evt.date).toLocaleDateString('en-IN', {
-                                day: 'numeric',
-                                month: 'short',
-                                year: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })}
-                            </span>
-                            <Badge className={`text-[9px] font-extrabold tracking-wider uppercase px-2 py-0.5 border-none ${style.badgeColor}`}>
-                              {evt.status || evt.type.replace('_', ' ')}
-                            </Badge>
-                          </div>
-
-                          <h4 className="font-bold text-slate-800 text-base leading-tight font-heading">{evt.title}</h4>
-                          <p className="text-sm font-medium text-slate-600 mt-1.5 leading-relaxed">{evt.description}</p>
-                          <p className="text-xs font-semibold text-slate-400 mt-1.5 border-t border-slate-100 pt-2">{evt.details}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="text-center p-12 text-slate-400 italic">
-                  <Activity className="h-10 w-10 text-slate-300 mx-auto mb-2" />
-                  No events found in this patient's history.
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
         
+        {/* Complete Mega History Tab */}
+        <TabsContent value="history" className="mt-6">
+          <PatientVisitHistoryTable patient={patient} sessions={patientSessions} assessments={patientAssessments} />
+        </TabsContent>
         {/* Documents Tab */}
         <TabsContent value="documents" className="space-y-6">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
