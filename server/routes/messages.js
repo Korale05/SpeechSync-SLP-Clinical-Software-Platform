@@ -36,7 +36,7 @@ router.get('/history/:userId', authenticate, async (req, res) => {
           { fromUserId: userId, toUserId: req.user.id }
         ]
       },
-      orderBy: { createdAt: 'asc' }
+      orderBy: { createdAt: 'desc' }
     });
     res.json(msgs);
   } catch (error) {
@@ -55,27 +55,27 @@ router.post('/', authenticate, async (req, res) => {
     let resolvedPatientId = patientId;
 
     if (req.user.role === 'PARENT') {
-      // Find parent's mapping
-      const parentRecord = await prisma.parent.findUnique({
-        where: { userId: req.user.id },
-        include: { patients: { include: { patient: { include: { assignedSlp: true } } } } }
+      // Find patient linked directly via parentUserId
+      const patient = await prisma.patient.findFirst({
+        where: { 
+          parentUserId: req.user.id,
+          ...(patientId ? { id: patientId } : {}) 
+        },
+        include: { assignedSlp: true }
       });
-      if (parentRecord && parentRecord.patients.length > 0) {
-        // Just pick the first patient for now, or use patientId if provided
-        const patient = patientId ? parentRecord.patients.find(p => p.patientId === patientId)?.patient : parentRecord.patients[0].patient;
-        if (patient) {
-          resolvedPatientId = patient.id;
-          resolvedToUserId = patient.assignedSlp?.userId;
-        }
+      
+      if (patient) {
+        resolvedPatientId = patient.id;
+        resolvedToUserId = patient.assignedSlp?.userId;
       }
     } else if (req.user.role === 'SLP') {
       if (patientId) {
         const patient = await prisma.patient.findUnique({
-          where: { id: patientId },
-          include: { parents: { include: { parent: true } } }
+          where: { id: patientId }
         });
-        if (patient && patient.parents.length > 0) {
-          resolvedToUserId = patient.parents[0].parent.userId;
+        
+        if (patient && patient.parentUserId) {
+          resolvedToUserId = patient.parentUserId;
         }
       }
     }

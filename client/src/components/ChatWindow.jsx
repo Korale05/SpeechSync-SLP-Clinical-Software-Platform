@@ -143,6 +143,9 @@ const ChatWindow = ({ isOpen, onClose, recipientId, patientId, title = "Messages
               
               // Only show messages matching the specific recipient if one is specified
               if (recipientId && msg.fromUserId !== recipientId && msg.toUserId !== recipientId) return null;
+              
+              // Only show messages related to the specific patient if one is specified
+              if (patientId && msg.patientId && msg.patientId !== patientId) return null;
 
               return (
                 <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>

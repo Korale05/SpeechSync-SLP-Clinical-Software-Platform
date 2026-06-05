@@ -4,10 +4,11 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Mic, MicOff, Video, VideoOff, Circle, PhoneOff, Lock } from 'lucide-react'
+import { Mic, MicOff, Video, VideoOff, Circle, PhoneOff, Lock, MessageCircle } from 'lucide-react'
 import { api } from '../services/api'
 import { toast } from 'react-hot-toast'
 import LoadingScreen from '../components/LoadingScreen'
+import ChatWindow from '../components/ChatWindow'
 
 const TeletherapyRoom = () => {
   const { sessionId } = useParams()
@@ -40,6 +41,7 @@ const TeletherapyRoom = () => {
   const [isMuted, setIsMuted] = useState(false)
   const [isVideoOff, setIsVideoOff] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
+  const [isChatOpen, setIsChatOpen] = useState(false)
   
   // Read Jitsi configurations from environment variables
   const JITSI_API_KEY = import.meta.env.VITE_JITSI_API_KEY || ""; 
@@ -108,7 +110,15 @@ const TeletherapyRoom = () => {
           <div className="font-mono font-bold text-white bg-slate-800 px-3 py-1 rounded-md border border-slate-700 tracking-wider">
             {formatTime(sessionTime)}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={() => setIsChatOpen(true)}
+              className="bg-primary/20 hover:bg-primary/30 border-primary/50 text-white flex items-center gap-2 rounded-full h-8 px-3"
+            >
+              <MessageCircle className="h-4 w-4" /> Message Parent
+            </Button>
             <Badge variant="outline" className="bg-red-500/10 border-red-500/30 text-red-400 font-semibold px-2 py-0.5 animate-pulse text-[10px]">
               LIVE TELEHEALTH
             </Badge>
@@ -173,6 +183,14 @@ const TeletherapyRoom = () => {
           </Button>
         </div>
       </div>
+
+      <ChatWindow 
+        isOpen={isChatOpen} 
+        onClose={() => setIsChatOpen(false)} 
+        recipientId={selectedPatient?.parentUserId}
+        patientId={selectedPatient?.id}
+        title={`Message Parent (${selectedPatient?.name})`}
+      />
     </div>
   )
 }

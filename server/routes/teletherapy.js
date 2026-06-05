@@ -3,12 +3,13 @@ import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import authenticate from '../middleware/authenticate.js';
 import { authorize } from '../middleware/authorize.js';
+import { emitToUser } from '../socket.js';
 
 const router = Router();
 const prisma = new PrismaClient();
 
 // POST /api/teletherapy/create-room — create teletherapy room URL
-router.post('/create-room', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
+router.post('/create-room', authenticate, async (req, res) => {
   const { appointmentId, sessionId } = req.body;
   const resolvedApptId = appointmentId || sessionId;
 
@@ -18,7 +19,8 @@ router.post('/create-room', authenticate, authorize('SLP', 'ADMIN'), async (req,
 
   try {
     const appt = await prisma.appointment.findUnique({
-      where: { id: resolvedApptId }
+      where: { id: resolvedApptId },
+      include: { patient: true }
     });
 
     if (!appt) {
@@ -40,6 +42,44 @@ router.post('/create-room', authenticate, authorize('SLP', 'ADMIN'), async (req,
       data: { dailyRoomUrl: jitsiUrl } // using existing field for backward compatibility
     });
 
+    // Auto-send message to parent
+    if (appt.patient && appt.patient.parentUserId) {
+      const parentUserId = appt.patient.parentUserId;
+      let conversation = await prisma.conversation.findFirst({
+        where: {
+          AND: [
+            { participantIds: { has: req.user.id } },
+            { participantIds: { has: parentUserId } }
+          ]
+        }
+      });
+
+      if (!conversation) {
+        conversation = await prisma.conversation.create({
+          data: { participantIds: [req.user.id, parentUserId] }
+        });
+      }
+
+      const msg = await prisma.message.create({
+        data: {
+          fromUserId: req.user.id,
+          toUserId: parentUserId,
+          patientId: appt.patient.id,
+          subject: 'Teletherapy Session Link',
+          body: `Please join the teletherapy session using this link: ${jitsiUrl}`,
+          conversationId: conversation.id
+        }
+      });
+
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { updatedAt: new Date() }
+      });
+
+      emitToUser(parentUserId, 'new_message', msg);
+      emitToUser(parentUserId, 'new_notification', { message: 'New teletherapy link received' });
+    }
+
     res.json({ url: jitsiUrl, roomName: `speechsync-${resolvedApptId}` });
   } catch (error) {
     console.error('Create room error:', error);
@@ -48,7 +88,7 @@ router.post('/create-room', authenticate, authorize('SLP', 'ADMIN'), async (req,
 });
 
 // POST /api/teletherapy/create-session — create Jitsi video session
-router.post('/create-session', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
+router.post('/create-session', authenticate, async (req, res) => {
   const { patientId } = req.body;
   if (!patientId) return res.status(400).json({ error: 'patientId is required' });
 
@@ -78,6 +118,45 @@ router.post('/create-session', authenticate, authorize('SLP', 'ADMIN'), async (r
       }
     });
 
+    // Auto-send message to parent
+    const patient = await prisma.patient.findUnique({ where: { id: patientId } });
+    if (patient && patient.parentUserId) {
+      const parentUserId = patient.parentUserId;
+      let conversation = await prisma.conversation.findFirst({
+        where: {
+          AND: [
+            { participantIds: { has: req.user.id } },
+            { participantIds: { has: parentUserId } }
+          ]
+        }
+      });
+
+      if (!conversation) {
+        conversation = await prisma.conversation.create({
+          data: { participantIds: [req.user.id, parentUserId] }
+        });
+      }
+
+      const msg = await prisma.message.create({
+        data: {
+          fromUserId: req.user.id,
+          toUserId: parentUserId,
+          patientId: patient.id,
+          subject: 'Teletherapy Session Started',
+          body: `I have started the teletherapy session. Please join using this link: ${meetingUrl}`,
+          conversationId: conversation.id
+        }
+      });
+
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { updatedAt: new Date() }
+      });
+
+      emitToUser(parentUserId, 'new_message', msg);
+      emitToUser(parentUserId, 'new_notification', { message: 'Teletherapy session started' });
+    }
+
     res.json({
       sessionId: session.id,
       sessionType: 'VIDEO_CALL',
@@ -90,7 +169,7 @@ router.post('/create-session', authenticate, authorize('SLP', 'ADMIN'), async (r
 });
 
 // POST /api/teletherapy/create-direct-session — create AI workspace session directly
-router.post('/create-direct-session', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
+router.post('/create-direct-session', authenticate, async (req, res) => {
   const { patientId } = req.body;
   if (!patientId) return res.status(400).json({ error: 'patientId is required' });
 
@@ -125,7 +204,7 @@ router.post('/create-direct-session', authenticate, authorize('SLP', 'ADMIN'), a
 });
 
 // POST /api/teletherapy/end-session — mark a session ended
-router.post('/end-session', authenticate, authorize('SLP', 'ADMIN'), async (req, res) => {
+router.post('/end-session', authenticate, async (req, res) => {
   const { sessionId, duration } = req.body;
   if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
 
