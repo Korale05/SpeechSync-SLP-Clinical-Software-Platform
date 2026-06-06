@@ -162,6 +162,46 @@ async function main() {
     })
   ]);
 
+  // ── PARENT & SCHOOL MAPPINGS ─────────────────────────────────────────────────
+  const parent = await prisma.parent.upsert({
+    where: { userId: parentUser.id },
+    update: {},
+    create: {
+      userId: parentUser.id,
+      name: 'Priya Sharma',
+      email: 'parent@speechsync.in',
+      phone: '+91 98765 43210',
+      relationship: 'Mother'
+    }
+  });
+
+  await prisma.parentPatientMapping.upsert({
+    where: { parentId_patientId: { parentId: parent.id, patientId: 'P001' } },
+    update: {},
+    create: { parentId: parent.id, patientId: 'P001' }
+  });
+
+  const school = await prisma.school.upsert({
+    where: { userId: schoolUser.id },
+    update: {},
+    create: {
+      userId: schoolUser.id,
+      name: 'Sunrise International School',
+      coordinatorName: 'Ms. Anita Desai',
+      email: 'school@speechsync.in',
+      phone: '+91 80000 00000'
+    }
+  });
+
+  const schoolStudents = ['P001', 'P002', 'P003', 'P004'];
+  for (const pId of schoolStudents) {
+    await prisma.schoolPatientMapping.upsert({
+      where: { schoolId_patientId: { schoolId: school.id, patientId: pId } },
+      update: {},
+      create: { schoolId: school.id, patientId: pId }
+    });
+  }
+
   // ── GOALS (2–3 per patient) ─────────────────────────────────────────────────
   const today = new Date();
   const sixMonths = new Date(today); sixMonths.setMonth(sixMonths.getMonth() + 6);

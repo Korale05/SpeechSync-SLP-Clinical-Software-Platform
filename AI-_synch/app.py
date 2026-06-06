@@ -24,7 +24,8 @@ def root():
             "goals_only"      : "POST /api/ai/recommend-goals",
             "unified"         : "POST /api/ai/analyze-session",
             "extract_only"    : "POST /api/ai/extract-session",     # ← ADD HERE
-            "transcript_full" : "POST /api/ai/transcript-to-soap"   # ← ADD HERE
+            "transcript_full" : "POST /api/ai/transcript-to-soap",  # ← ADD HERE
+            "translate_soap"  : "POST /api/ai/translate-soap"
         }
     }
 

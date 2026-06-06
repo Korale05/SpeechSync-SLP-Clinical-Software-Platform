@@ -70,12 +70,12 @@
  
 @layer base {
   * {
-    @apply border-slate-200;
+    @apply border-border;
   }
   body {
-    @apply bg-background text-slate-900 font-sans;
+    @apply bg-background text-foreground font-sans;
   }
   h1, h2, h3, h4, h5, h6 {
-    @apply font-heading;
+    @apply font-heading text-foreground;
   }
 }

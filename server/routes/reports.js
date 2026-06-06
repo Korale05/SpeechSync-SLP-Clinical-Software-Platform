@@ -4,8 +4,6 @@ import authenticate from '../middleware/authenticate.js';
 import { authorize } from '../middleware/authorize.js';
 import PDFDocument from 'pdfkit';
 
-
-
 const router = Router();
 const prisma = new PrismaClient();
 
@@ -78,7 +76,7 @@ async function generatePdfReport(res, studentName, grade, disorder, iepDueDate, 
   });
 }
 
-// GET /api/reports/iep/progress-report/:studentId (IEP student report)
+// GET /api/reports/iep/progress-report/:studentId (IEP student record PDF export)
 router.get('/iep/progress-report/:studentId', authenticate, authorize('SCHOOL_COORDINATOR', 'ADMIN', 'SLP'), async (req, res) => {
   try {
     const student = await prisma.iepStudent.findUnique({
@@ -114,9 +112,25 @@ router.get('/iep/progress-report/:studentId', authenticate, authorize('SCHOOL_CO
   }
 });
 
-// GET /api/reports/iep/:patientId (Direct patient profile PDF export)
-router.get('/iep/:patientId', authenticate, authorize('SCHOOL_COORDINATOR', 'ADMIN', 'SLP'), async (req, res) => {
+// GET /api/reports/iep/:patientId — Patient PDF export
+// BUG-05 FIX: PARENT role now included with ownership guard (parents can only access their own child)
+router.get('/iep/:patientId', authenticate, async (req, res) => {
   try {
+    // RBAC: SLP, ADMIN, SCHOOL_COORDINATOR always allowed; PARENT only for linked child
+    const allowedRoles = ['SLP', 'ADMIN', 'SCHOOL_COORDINATOR'];
+    if (!allowedRoles.includes(req.user.role) && req.user.role !== 'PARENT') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (req.user.role === 'PARENT') {
+      const pt = await prisma.patient.findUnique({
+        where: { id: req.params.patientId },
+        select: { parentUserId: true }
+      });
+      if (!pt || pt.parentUserId !== req.user.id) {
+        return res.status(403).json({ error: 'Forbidden: You can only access your child\'s report.' });
+      }
+    }
+
     const patient = await prisma.patient.findUnique({
       where: { id: req.params.patientId },
       include: { goals: true }
@@ -126,7 +140,7 @@ router.get('/iep/:patientId', authenticate, authorize('SCHOOL_COORDINATOR', 'ADM
       return res.status(404).json({ error: 'Patient not found' });
     }
 
-    // Attempt to match with an iepStudent record
+    // Attempt to match with an iepStudent record for grade/disorder
     const student = await prisma.iepStudent.findFirst({
       where: { patientId: patient.id }
     });
@@ -149,7 +163,7 @@ router.get('/iep/:patientId', authenticate, authorize('SCHOOL_COORDINATOR', 'ADM
   }
 });
 
-// GET /api/reports/:patientId/download (Comprehensive Patient Report)
+// GET /api/reports/:patientId/download (Comprehensive Clinical Patient Report)
 router.get('/:patientId/download', authenticate, async (req, res) => {
   try {
     const { patientId } = req.params;
@@ -196,11 +210,8 @@ router.get('/:patientId/download', authenticate, async (req, res) => {
     // Create a PDF document
     const doc = new PDFDocument({ margin: 50 });
     
-    // Set response headers to prompt a file download
-    res.setHeader('Content-disposition', `attachment; filename="SpeechSync_Report_${patient.name.replace(/\\s+/g, '_')}.pdf"`);
+    res.setHeader('Content-disposition', `attachment; filename="SpeechSync_Report_${patient.name.replace(/\s+/g, '_')}.pdf"`);
     res.setHeader('Content-type', 'application/pdf');
-
-    // Pipe the PDF document to the response
     doc.pipe(res);
 
     // Title and Header
@@ -247,7 +258,7 @@ router.get('/:patientId/download', authenticate, async (req, res) => {
     if (req.user.role !== 'SCHOOL_COORDINATOR') {
       doc.fontSize(16).text('Billing Summary', { underline: true });
       const outstanding = patient.invoices.reduce((sum, inv) => sum + inv.balanceAmount, 0);
-      doc.fontSize(12).text(`Outstanding Balance: $${outstanding.toFixed(2)}`);
+      doc.fontSize(12).text(`Outstanding Balance: ₹${outstanding.toFixed(2)}`);
     }
 
     // Finalize the PDF
@@ -274,6 +285,66 @@ router.get('/:patientId/download', authenticate, async (req, res) => {
     if (!res.headersSent) {
       res.status(500).json({ error: 'Internal server error during report generation' });
     }
+  }
+});
+
+// GET /api/reports/revenue — Revenue analytics for AdminBillingReports page (BUG-04 FIX)
+router.get('/revenue', authenticate, authorize('ADMIN'), async (req, res) => {
+  try {
+    // Fetch all invoices with items, payments, and patient name
+    const invoices = await prisma.invoice.findMany({
+      include: { items: true, payments: true, patient: { select: { name: true } } },
+      orderBy: { invoiceDate: 'asc' }
+    });
+
+    // ── Monthly Revenue ──────────────────────────────────────────────────────
+    const monthMap = {};
+    for (const inv of invoices) {
+      const monthKey = new Date(inv.invoiceDate).toLocaleString('en-IN', { month: 'short', year: '2-digit' });
+      if (!monthMap[monthKey]) monthMap[monthKey] = { month: monthKey, billed: 0, collected: 0 };
+      monthMap[monthKey].billed    += inv.totalAmount || 0;
+      monthMap[monthKey].collected += inv.paidAmount  || 0;
+    }
+    const monthlyRevenue = Object.values(monthMap);
+
+    // ── Paid vs Pending split ────────────────────────────────────────────────
+    const totalCollected   = invoices.reduce((sum, inv) => sum + (inv.paidAmount    || 0), 0);
+    const totalOutstanding = invoices.reduce((sum, inv) => sum + (inv.balanceAmount || 0), 0);
+    const paidVsPending = [
+      { name: 'Collected', value: Math.round(totalCollected) },
+      { name: 'Pending',   value: Math.round(totalOutstanding) }
+    ];
+
+    // ── Revenue by service category (invoice item descriptions) ─────────────
+    const serviceMap = {};
+    for (const inv of invoices) {
+      for (const item of inv.items) {
+        const key = item.description || 'Other';
+        serviceMap[key] = (serviceMap[key] || 0) + (item.amount || 0);
+      }
+    }
+    const revenueByService = Object.entries(serviceMap)
+      .map(([service, value]) => ({ service, value: Math.round(value) }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 6);
+
+    // ── Top paying patients ──────────────────────────────────────────────────
+    const patientMap = {};
+    for (const inv of invoices) {
+      const name = inv.patient?.name || 'Unknown';
+      if (!patientMap[name]) patientMap[name] = { name, totalBilled: 0, totalPaid: 0 };
+      patientMap[name].totalBilled += inv.totalAmount || 0;
+      patientMap[name].totalPaid   += inv.paidAmount  || 0;
+    }
+    const topPatients = Object.values(patientMap)
+      .sort((a, b) => b.totalBilled - a.totalBilled)
+      .slice(0, 5)
+      .map(p => ({ ...p, totalBilled: Math.round(p.totalBilled), totalPaid: Math.round(p.totalPaid) }));
+
+    res.json({ monthlyRevenue, paidVsPending, revenueByService, topPatients });
+  } catch (error) {
+    console.error('Revenue report error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

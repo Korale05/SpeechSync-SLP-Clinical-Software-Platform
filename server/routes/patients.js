@@ -494,6 +494,58 @@ router.patch('/:id', authenticate, authorize('SLP', 'ADMIN'), async (req, res) =
       }
     }
 
+    if (req.body.createSchoolPortalAccount && req.body.schoolEmail) {
+      const { schoolEmail, schoolName, schoolCoordinatorName, schoolPhone } = req.body;
+      let existingSchoolUser = await prisma.user.findUnique({ where: { email: schoolEmail } });
+      
+      if (!existingSchoolUser) {
+        const temporaryPassword = `Temp@${Math.floor(10000 + Math.random() * 90000)}`;
+        const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
+        existingSchoolUser = await prisma.user.create({
+          data: {
+            email: schoolEmail,
+            name: schoolCoordinatorName || schoolName,
+            password: hashedPassword,
+            role: 'SCHOOL_COORDINATOR',
+            createdBy: req.user.id
+          }
+        });
+        schoolAccount = { email: schoolEmail, temporaryPassword };
+
+        await prisma.auditLog.create({
+          data: {
+            userId: req.user.id,
+            action: 'USER_CREATED',
+            resource: 'USER',
+            resourceId: existingSchoolUser.id,
+            details: { email: schoolEmail, role: 'SCHOOL_COORDINATOR' }
+          }
+        });
+      }
+
+      let existingSchool = await prisma.school.findUnique({ where: { userId: existingSchoolUser.id } });
+      if (!existingSchool) {
+        existingSchool = await prisma.school.create({
+          data: {
+            userId: existingSchoolUser.id,
+            name: schoolName || 'Unknown School',
+            coordinatorName: schoolCoordinatorName,
+            email: schoolEmail,
+            phone: schoolPhone
+          }
+        });
+      }
+
+      const existingSchoolMapping = await prisma.schoolPatientMapping.findUnique({
+        where: { schoolId_patientId: { schoolId: existingSchool.id, patientId: id } }
+      });
+      if (!existingSchoolMapping) {
+        await prisma.schoolPatientMapping.create({
+          data: { schoolId: existingSchool.id, patientId: id }
+        });
+      }
+    }
+
     // Log action
     await prisma.auditLog.create({
       data: {

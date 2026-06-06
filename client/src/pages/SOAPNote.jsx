@@ -6,8 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Sparkles, Save, CheckCircle, FileSignature, Clock, AlertTriangle } from 'lucide-react'
-import { streamSOAPNote } from '../services/aiScribe'
+import { Sparkles, Save, CheckCircle, FileSignature, Clock, AlertTriangle, Languages } from 'lucide-react'
+import { streamSOAPNote, translateSOAPNote } from '../services/aiScribe'
 import { toast } from 'react-hot-toast'
 import LoadingScreen from '../components/LoadingScreen'
 
@@ -60,6 +60,8 @@ const SOAPNote = () => {
   const [duration, setDuration] = useState('45')
 
   const [isDrafting, setIsDrafting] = useState(false)
+  const [isTranslating, setIsTranslating] = useState(false)
+  const [targetLanguage, setTargetLanguage] = useState('English')
   const [soapData, setSoapData] = useState({
     subjective: '',
     objective: '',
@@ -257,6 +259,26 @@ const SOAPNote = () => {
         setIsDrafting(false)
       }
     )
+  }
+
+  const handleTranslate = async () => {
+    if (targetLanguage === 'English') return; // Default
+    setIsTranslating(true);
+    try {
+      const translatedData = await translateSOAPNote(soapData, targetLanguage);
+      setSoapData(prev => ({
+        ...prev,
+        subjective: translatedData.subjective || prev.subjective,
+        objective: translatedData.objective || prev.objective,
+        assessment: translatedData.assessment || prev.assessment,
+        plan: translatedData.plan || prev.plan,
+      }));
+      toast.success(`Note translated to ${targetLanguage}`);
+    } catch (error) {
+      toast.error(`Translation failed: ${error.message}`);
+    } finally {
+      setIsTranslating(false);
+    }
   }
 
   const handleSave = (status) => {
@@ -493,14 +515,36 @@ const SOAPNote = () => {
         <div>
           <div className="flex justify-between items-center mb-6">
             <h2 className="font-heading text-2xl font-bold text-slate-900">SOAP Note Editor</h2>
-            <Button 
-              onClick={handleAIScribe} 
-              disabled={isDrafting}
-              className="bg-purple-600 hover:bg-purple-700 text-white shadow-sm transition-all rounded-lg"
-            >
-              {isDrafting ? <Clock className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-              {isDrafting ? 'Drafting...' : '✨ AI Scribe — Draft Note'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <select 
+                value={targetLanguage}
+                onChange={(e) => setTargetLanguage(e.target.value)}
+                className="flex h-10 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+              >
+                <option value="English">English</option>
+                <option value="Marathi">Marathi</option>
+                <option value="Hindi">Hindi</option>
+                <option value="Telugu">Telugu</option>
+                <option value="Tamil">Tamil</option>
+              </select>
+              <Button 
+                onClick={handleTranslate} 
+                disabled={isDrafting || isTranslating || targetLanguage === 'English' || !soapData.subjective}
+                variant="outline"
+                className="bg-white border-slate-200 hover:bg-slate-50 text-slate-700 shadow-sm transition-all rounded-lg"
+              >
+                {isTranslating ? <Clock className="mr-2 h-4 w-4 animate-spin" /> : <Languages className="mr-2 h-4 w-4 text-indigo-500" />}
+                {isTranslating ? 'Translating...' : 'Translate'}
+              </Button>
+              <Button 
+                onClick={handleAIScribe} 
+                disabled={isDrafting || isTranslating}
+                className="bg-purple-600 hover:bg-purple-700 text-white shadow-sm transition-all rounded-lg"
+              >
+                {isDrafting ? <Clock className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                {isDrafting ? 'Drafting...' : '✨ AI Scribe — Draft Note'}
+              </Button>
+            </div>
           </div>
 
           {isDrafting && (

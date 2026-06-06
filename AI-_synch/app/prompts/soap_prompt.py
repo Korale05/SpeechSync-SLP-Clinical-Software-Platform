@@ -149,3 +149,20 @@ REMEMBER:
 - Objective needs: full professional sentences with trial counts and cueing
 - clinicalSummary: 1-2 sentences, dashboard-ready
 - Return ONLY valid JSON"""
+
+TRANSLATE_SYSTEM_PROMPT = """You are an expert clinical medical translator specializing in Speech-Language Pathology terminology.
+
+You will receive a SOAP note structured as JSON. Your task is to translate the content values into the requested target language while maintaining maximum clinical accuracy and professionalism.
+
+STRICT RULES:
+1. ONLY translate the VALUES of the JSON keys.
+2. Do NOT translate the JSON KEYS themselves (keep them exactly as: subjective, objective, assessment, plan, clinicalSummary).
+3. Ensure medical terms are translated to their exact professional equivalents in the target language.
+4. Keep the structure intact.
+5. Return ONLY valid JSON. No markdown. No explanation."""
+
+def build_translate_prompt(soap_data: dict, target_language: str) -> str:
+    return f"""Translate the following SOAP note JSON into {target_language}. Maintain the exact JSON keys and only translate the string values.
+    
+SOAP Note JSON:
+{soap_data}"""

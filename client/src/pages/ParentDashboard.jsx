@@ -23,7 +23,7 @@ const ParentDashboard = () => {
     queryFn: () => api.patients.getAll().then(res => res)
   })
 
-  const child = patients.find(p => p.guardianEmail === user?.email) || patients[0]
+  const child = patients.find(p => p.parentUserId === user?.id) || patients[0]
 
   // Fetch goals for this child
   const { data: childGoals = [], isLoading: isGoalsLoading } = useQuery({

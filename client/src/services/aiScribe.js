@@ -70,3 +70,32 @@ export async function streamSOAPNote(sessionData, onChunk, onDone) {
     onDone();
   }
 }
+
+export async function translateSOAPNote(soapData, targetLanguage) {
+  const token = localStorage.getItem('speechsync_token');
+  const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  
+  const response = await fetch(`${apiBase}/api/ai/translate-soap`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      soap_data: soapData,
+      target_language: targetLanguage
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (data.status === 'success') {
+    return data.data; // This is the parsed JSON SOAP note
+  } else {
+    throw new Error(data.message || 'Failed to translate SOAP note');
+  }
+}

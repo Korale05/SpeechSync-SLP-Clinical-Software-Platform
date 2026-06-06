@@ -1,14 +1,35 @@
 // client/src/components/Sidebar.jsx
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import useAuthStore, { ROLES } from '../store/authStore'
-import { Home, Users, ClipboardList, FileText, Video, TrendingUp, CreditCard, Settings, LogOut, GraduationCap, KeyRound, Eye, EyeOff, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { Home, Users, ClipboardList, FileText, Video, TrendingUp, CreditCard, Settings, LogOut, GraduationCap, KeyRound, Eye, EyeOff, CheckCircle2, AlertTriangle, Sun, Moon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '../services/api'
 import { toast } from 'react-hot-toast'
 
 const Sidebar = () => {
   const { user, logout } = useAuthStore()
+
+  // Theme state
+  const [theme, setTheme] = useState('light')
+
+  useEffect(() => {
+    if (document.documentElement.classList.contains('dark')) {
+      setTheme('dark')
+    }
+  }, [])
+
+  const toggleTheme = () => {
+    if (theme === 'light') {
+      document.documentElement.classList.add('dark')
+      localStorage.theme = 'dark'
+      setTheme('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+      localStorage.theme = 'light'
+      setTheme('light')
+    }
+  }
 
   // Change Password modal state
   const [showChangePassword, setShowChangePassword] = useState(false)
@@ -132,6 +153,16 @@ const Sidebar = () => {
               <span className="truncate text-xs text-slate-400">{user.role}</span>
             </div>
           </div>
+          <button 
+            onClick={toggleTheme}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
+          >
+            {theme === 'light' ? (
+              <><Moon className="h-5 w-5" /> Dark Mode</>
+            ) : (
+              <><Sun className="h-5 w-5" /> Light Mode</>
+            )}
+          </button>
           <button 
             onClick={() => setShowChangePassword(true)}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition-colors hover:bg-white/5 hover:text-white"

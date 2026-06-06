@@ -21,6 +21,7 @@ import Goals from './pages/Goals'
 import Billing from './pages/Billing'
 import Portal from './pages/Portal'
 import ParentDashboard from './pages/ParentDashboard'
+import ParentBillingCenter from './pages/ParentBillingCenter'
 import SchoolDashboard from './pages/SchoolDashboard'
 import IEP from './pages/IEP'
 import Scheduling from './pages/Scheduling'
@@ -84,6 +85,7 @@ function App() {
               {/* Parent Only */}
               <Route element={<ProtectedRoute allowedRoles={[ROLES.PARENT]} />}>
                 <Route path="/parent/dashboard" element={<ParentDashboard />} />
+                <Route path="/parent/billing" element={<ParentBillingCenter />} />
               </Route>
 
               {/* School Coordinator & Admin */}

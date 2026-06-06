@@ -28,6 +28,11 @@ const patientSchema = z.object({
   diagnoses: z.string().min(2, 'Please enter at least one primary diagnosis'),
   assignedSlpId: z.string().min(1, 'Please select an assigned SLP'),
   createParentPortalAccount: z.boolean().optional(),
+  createSchoolPortalAccount: z.boolean().optional(),
+  schoolName: z.string().optional(),
+  schoolCoordinatorName: z.string().optional(),
+  schoolEmail: z.string().optional(),
+  schoolPhone: z.string().optional(),
 })
 
 const EditPatient = () => {
@@ -80,6 +85,11 @@ const EditPatient = () => {
         diagnoses: patient.diagnoses ? patient.diagnoses.join(', ') : '',
         assignedSlpId: patient.assignedSlpId || '',
         createParentPortalAccount: false,
+        createSchoolPortalAccount: false,
+        schoolName: '',
+        schoolCoordinatorName: '',
+        schoolEmail: '',
+        schoolPhone: '',
       })
     }
   }, [patient, reset])
@@ -114,15 +124,26 @@ const EditPatient = () => {
     onSuccess: (data) => {
       toast.success('Patient details updated successfully')
 
-      if (data?.parentAccount) {
+      if (data?.parentAccount || data?.schoolAccount) {
         toast((t) => (
           <div className="flex flex-col gap-2">
-            <p className="font-bold">Parent Account Created!</p>
-            <p className="text-sm">Username: {data.parentAccount.email}</p>
-            <p className="text-sm font-mono bg-slate-100 p-1 rounded">Password: {data.parentAccount.temporaryPassword}</p>
-            <Button size="sm" onClick={() => toast.dismiss(t.id)}>Dismiss</Button>
+            {data?.parentAccount && (
+              <>
+                <p className="font-bold">Parent Account Created!</p>
+                <p className="text-sm">Username: {data.parentAccount.email}</p>
+                <p className="text-sm font-mono bg-slate-100 p-1 rounded">Password: {data.parentAccount.temporaryPassword}</p>
+              </>
+            )}
+            {data?.schoolAccount && (
+              <>
+                <p className="font-bold mt-2">School Account Created!</p>
+                <p className="text-sm">Username: {data.schoolAccount.email}</p>
+                <p className="text-sm font-mono bg-slate-100 p-1 rounded">Password: {data.schoolAccount.temporaryPassword}</p>
+              </>
+            )}
+            <Button size="sm" className="mt-2" onClick={() => toast.dismiss(t.id)}>Dismiss</Button>
           </div>
-        ), { duration: 10000 })
+        ), { duration: 15000 })
       }
 
       queryClient.invalidateQueries({ queryKey: ['patients'] })
@@ -252,13 +273,68 @@ const EditPatient = () => {
                     {...register('createParentPortalAccount')}
                     className="rounded border-slate-300 text-primary focus:ring-primary h-4 w-4"
                   />
-                  Create Parent Portal Account
+                  Create/Link Parent Portal Account
                 </label>
                 <p className="text-xs text-slate-500 pl-6">
-                  If checked, an account will be automatically generated and linked to this patient. The guardian email above is required.
+                  If checked, an account will be automatically generated (or linked if email exists). Guardian email is required.
                 </p>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm border-slate-200 bg-white">
+          <CardHeader>
+            <CardTitle className="text-lg">School Integration</CardTitle>
+            <CardDescription>Link this patient to a school portal account for IEP tracking</CardDescription>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">School Name</label>
+              <Input
+                {...register('schoolName')}
+                placeholder="e.g. Lincoln Elementary"
+                className="border-slate-200"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">Coordinator Name</label>
+              <Input
+                {...register('schoolCoordinatorName')}
+                placeholder="e.g. Ms. Sarah Jenkins"
+                className="border-slate-200"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">School Email</label>
+              <Input
+                type="email"
+                {...register('schoolEmail')}
+                placeholder="school@example.com"
+                className="border-slate-200"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">School Phone</label>
+              <Input
+                {...register('schoolPhone')}
+                placeholder="+1 (555) 000-0000"
+                className="border-slate-200"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2 mt-2 border-t border-slate-100 pt-4">
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  {...register('createSchoolPortalAccount')}
+                  className="rounded border-slate-300 text-primary focus:ring-primary h-4 w-4"
+                />
+                Create/Link School Portal Account
+              </label>
+              <p className="text-xs text-slate-500 pl-6">
+                If checked, an account will be automatically generated (or linked if email exists). School email is required.
+              </p>
+            </div>
           </CardContent>
         </Card>
 

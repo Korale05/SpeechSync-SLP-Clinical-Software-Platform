@@ -154,6 +154,7 @@ model GoalProgress {
   goalId     String
   goal       Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
   value      Float
+  notes      String?
   recordedAt DateTime @default(now())
 
   @@index([goalId])
