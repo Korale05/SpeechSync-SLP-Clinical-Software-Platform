@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -28,6 +30,6 @@ def root():
             "translate_soap"  : "POST /api/ai/translate-soap"
         }
     }
-
 if __name__ == "__main__":
-    app.run(debug=True, port=8001, host="0.0.0.0")
+    port = int(os.environ.get('PORT', 8001))
+    app.run(debug=False, port=port, host="0.0.0.0")

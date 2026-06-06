@@ -3,7 +3,7 @@ import fetch from 'node-fetch';
 import authenticate from '../middleware/authenticate.js';
 
 const router = Router();
-const PYTHON_AI_BASE_URL = 'http://127.0.0.1:8001/api/ai';
+const PYTHON_AI_BASE_URL = process.env.PYTHON_AI_BASE_URL || 'http://127.0.0.1:8001/api/ai';
 
 router.post('/generate-soap', authenticate, async (req, res) => {
   try {
