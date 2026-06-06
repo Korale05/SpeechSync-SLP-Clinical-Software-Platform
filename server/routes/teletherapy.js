@@ -100,7 +100,8 @@ router.post('/create-session', authenticate, async (req, res) => {
     }
 
     const roomId = `speechsync-${patientId}-${Date.now()}`;
-    const meetingUrl = `https://meet.jit.si/${roomId}`;
+    // Use VDO.Ninja for a completely free, peer-to-peer room (no login or credit card required)
+    const meetingUrl = `https://vdo.ninja/?room=speechsync-${roomId}`;
 
     const session = await prisma.session.create({
       data: {

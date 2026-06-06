@@ -329,7 +329,14 @@ router.get('/revenue', authenticate, authorize('ADMIN'), async (req, res) => {
       .slice(0, 6);
 
     // ── Top paying patients ──────────────────────────────────────────────────
+    // Fetch all patients so new patients appear in the report even without invoices
+    const allPatients = await prisma.patient.findMany({ select: { name: true } });
     const patientMap = {};
+    
+    for (const p of allPatients) {
+      patientMap[p.name] = { name: p.name, totalBilled: 0, totalPaid: 0 };
+    }
+
     for (const inv of invoices) {
       const name = inv.patient?.name || 'Unknown';
       if (!patientMap[name]) patientMap[name] = { name, totalBilled: 0, totalPaid: 0 };
